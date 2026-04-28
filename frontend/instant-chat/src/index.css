@@ -120,6 +120,160 @@ All colors MUST be HSL.
 }
 
 @layer utilities {
+  .chat-container {
+    position: relative;
+    isolation: isolate;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+    background: hsl(226 28% 7%);
+  }
+
+  .bg-layer,
+  .overlay-layer,
+  .noise-layer {
+    position: absolute;
+    inset: 0;
+  }
+
+  .bg-layer {
+    z-index: 0;
+    background-image:
+      radial-gradient(circle at top, hsl(160 90% 50% / 0.08), transparent 34%),
+      url("/annet_bg.webp");
+    background-size: cover, cover;
+    background-position: center, center;
+    background-repeat: no-repeat;
+    transform: scale(1.08);
+    animation: bgFloat 20s ease-in-out infinite alternate;
+    will-change: transform;
+    filter: saturate(1.12) brightness(0.88) contrast(1.04);
+  }
+
+  .overlay-layer {
+    z-index: 1;
+    background:
+      linear-gradient(180deg, rgb(2 8 7 / 0.42), rgb(4 7 10 / 0.5)),
+      radial-gradient(circle at top, rgb(0 255 156 / 0.04), transparent 45%);
+    backdrop-filter: blur(1px);
+    -webkit-backdrop-filter: blur(4px);
+  }
+
+  .noise-layer {
+    z-index: 2;
+    opacity: 0.045;
+    background-image:
+      radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.4) 1px, transparent 0),
+      linear-gradient(90deg, rgb(0 255 156 / 0.12) 1px, transparent 1px),
+      linear-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px);
+    background-size: 4px 4px, 28px 28px, 28px 28px;
+    mix-blend-mode: soft-light;
+    pointer-events: none;
+  }
+
+  .chat-content {
+    position: relative;
+    z-index: 3;
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+  }
+
+  .messages-scroll {
+    position: relative;
+  }
+
+  .messages-scroll::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(circle at 50% 18%, rgb(0 255 156 / 0.04), transparent 18%),
+      linear-gradient(180deg, transparent 0%, rgb(3 10 11 / 0.06) 100%);
+  }
+
+  .chat-compose {
+    position: relative;
+    z-index: 1;
+    background: linear-gradient(180deg, transparent, rgb(4 10 10 / 0.14));
+  }
+
+  .message {
+    max-width: min(60%, 42rem);
+    border: 1px solid rgb(255 255 255 / 0.06);
+    box-shadow:
+      0 10px 30px rgb(0 0 0 / 0.18),
+      inset 0 1px 0 rgb(255 255 255 / 0.04);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .message.sent {
+    background: #00ff9c20;
+    box-shadow:
+      0 10px 30px rgb(0 0 0 / 0.22),
+      0 0 24px rgb(0 255 156 / 0.08),
+      inset 0 1px 0 rgb(255 255 255 / 0.06);
+  }
+
+  .message.received {
+    background: #ffffff10;
+  }
+
+  .anonymous-panel {
+    background:
+      linear-gradient(180deg, hsl(0 46% 10% / 0.92), hsl(0 42% 8% / 0.95)),
+      radial-gradient(circle at top right, hsl(0 90% 54% / 0.1), transparent 40%);
+    box-shadow: inset 0 1px 0 hsl(0 100% 80% / 0.06), 0 12px 30px hsl(0 0% 0% / 0.2);
+  }
+
+  .hud-arc {
+    position: relative;
+    background:
+      radial-gradient(circle, hsl(0 100% 60% / 0.26) 0 10%, transparent 10% 34%, hsl(0 100% 60% / 0.2) 34% 38%, transparent 38% 58%, hsl(0 100% 60% / 0.15) 58% 62%, transparent 62%),
+      conic-gradient(from 0deg, hsl(0 95% 58% / 0.05), hsl(0 95% 58% / 0.8), hsl(0 95% 58% / 0.08), hsl(0 95% 58% / 0.7), hsl(0 95% 58% / 0.05));
+    box-shadow: 0 0 22px hsl(0 95% 58% / 0.16);
+  }
+
+  .hud-arc::after {
+    content: "";
+    position: absolute;
+    inset: 8px;
+    border-radius: 9999px;
+    border: 1px solid hsl(0 100% 80% / 0.18);
+  }
+
+  .hud-arc-inner {
+    background: radial-gradient(circle, hsl(0 100% 70% / 0.18), hsl(0 80% 18% / 0.22));
+  }
+
+  @keyframes bgFloat {
+    0% {
+      transform: translate3d(0, 0, 0) scale(1.08);
+    }
+    100% {
+      transform: translate3d(-1.25%, -1%, 0) scale(1.1);
+    }
+  }
+
+  @media (max-width: 768px) {
+    .message {
+      max-width: 82%;
+    }
+
+    .bg-layer {
+      animation-duration: 24s;
+    }
+
+    .bg-layer,
+    .overlay-layer,
+    .noise-layer {
+      position: fixed;
+      inset: 0;
+    }
+  }
+
   .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
   .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 9999px; }
   .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }

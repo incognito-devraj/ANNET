@@ -1,5 +1,5 @@
 import { ChatUser } from "@/types/chat";
-import { Users } from "lucide-react";
+import { Shield, Users } from "lucide-react";
 
 type Props = {
   users: ChatUser[];
@@ -56,6 +56,28 @@ export function SidebarContent({ users, currentName }: Props) {
             </div>
           );
         })}
+      </div>
+      <div className="shrink-0 border-t border-border p-3">
+        <div className="anonymous-panel rounded-2xl border border-red-500/20 p-3">
+          <div className="flex items-center gap-3">
+            <div className="hud-arc flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl">
+              <div className="hud-arc-inner flex h-8 w-8 items-center justify-center rounded-full">
+                <Shield className="h-4 w-4 text-red-300" />
+              </div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.35em] text-red-300/80">
+                Anonymous
+              </div>
+              <div className="font-mono text-sm text-red-100">
+                YOU ARE ANONYMOUS
+              </div>
+              <div className="text-[11px] text-red-200/60">
+                masked relay active
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </>
   );

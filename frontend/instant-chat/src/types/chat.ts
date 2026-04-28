@@ -6,6 +6,7 @@ export type ChatUser = {
 export type FileMeta = {
   name: string;
   size: number;
+  mimeType?: string;
 };
 
 export type Reaction = {
@@ -56,6 +57,11 @@ export type ChatMessage =
       offer: unknown;
       received: boolean;
       ts: number;
+      // Transfer state (receiver side)
+      transferState?: "idle" | "connecting" | "transferring" | "done" | "error";
+      transferPercent?: number;
+      transferError?: string;
+      downloadBlob?: Blob;
       reactions?: Record<string, Reaction>;
     }
   | {

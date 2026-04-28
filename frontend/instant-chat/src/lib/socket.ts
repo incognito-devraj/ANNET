@@ -1,22 +1,29 @@
 import { io, Socket } from "socket.io-client";
 
-const URL = "http://localhost:3001";
+// Resolve backend URL from current page host — works for localhost and LAN (192.168.x.x)
+const { protocol, hostname } = window.location;
+const BACKEND_URL = `${protocol}//${hostname}:3001`;
 
-let socket: Socket | null = null;
+// Singleton socket — created once at module load, never recreated.
+// This prevents reconnects caused by React re-renders, file picker opens,
+// tab focus changes, or any other UI interaction.
+export const socket: Socket = io(BACKEND_URL, {
+  autoConnect: false, // we connect manually after nickname is set
+  transports: ["websocket", "polling"],
+  reconnection: true,
+  reconnectionAttempts: Infinity,
+  reconnectionDelay: 1000,
+  reconnectionDelayMax: 5000,
+});
 
-export function getSocket(): Socket {
-  if (!socket) {
-    socket = io(URL, {
-      autoConnect: true,
-      transports: ["websocket", "polling"],
-    });
+// Connect the socket (idempotent — safe to call multiple times)
+export function connectSocket() {
+  if (!socket.connected) {
+    socket.connect();
   }
-  return socket;
 }
 
+// Disconnect and clean up — only call on explicit leave
 export function disconnectSocket() {
-  if (socket) {
-    socket.disconnect();
-    socket = null;
-  }
+  socket.disconnect();
 }

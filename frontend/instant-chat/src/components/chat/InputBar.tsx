@@ -1,6 +1,6 @@
-import { useRef, useState, KeyboardEvent, ClipboardEvent, DragEvent } from "react";
+import { useRef, useState, KeyboardEvent, ClipboardEvent, DragEvent, PointerEvent } from "react";
 import { Button } from "@/components/ui/button";
-import { Paperclip, Send, X } from "lucide-react";
+import { Paperclip, Send, X, Upload } from "lucide-react";
 import { ReplyTo } from "@/types/chat";
 
 type Props = {
@@ -22,6 +22,13 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply }: Pro
     onSend(t);
     setValue("");
     onCancelReply?.();
+  };
+
+  const onSendPointerDown = (e: PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    if (!value.trim()) return;
+    send();
+    textareaRef.current?.focus({ preventScroll: true });
   };
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -60,14 +67,21 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply }: Pro
   };
 
   return (
+    // position:relative so the drag overlay is positioned correctly
     <div
-      className={`border-t border-border bg-card/60 backdrop-blur transition-colors ${
-        dragging ? "bg-primary/10 border-primary/40" : ""
-      }`}
+      className="relative border-t border-border bg-card/60 backdrop-blur"
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
       onDrop={onDrop}
     >
+      {/* Drag & drop overlay — covers the entire input bar */}
+      {dragging && (
+        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-primary/10 border-2 border-dashed border-primary/50 rounded-none pointer-events-none">
+          <Upload className="h-6 w-6 text-primary" />
+          <span className="text-sm text-primary font-medium">Drop to send</span>
+        </div>
+      )}
+
       {/* Reply preview strip */}
       {replyTo && (
         <div className="flex items-center gap-2 px-4 pt-2 pb-0 max-w-5xl mx-auto">
@@ -82,14 +96,6 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply }: Pro
           >
             <X className="h-3.5 w-3.5" />
           </button>
-        </div>
-      )}
-
-      {dragging && (
-        <div className="absolute inset-x-0 bottom-0 h-16 flex items-center justify-center pointer-events-none">
-          <span className="text-sm text-primary font-medium bg-card/90 px-4 py-1.5 rounded-full border border-primary/30 shadow">
-            Drop to send
-          </span>
         </div>
       )}
 
@@ -109,26 +115,26 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply }: Pro
           variant="ghost"
           size="icon"
           onClick={() => fileRef.current?.click()}
-          className="shrink-0 h-11 w-11"
+          className="shrink-0 h-10 w-10"
           aria-label="Attach file"
         >
-          <Paperclip className="h-5 w-5" />
+          <Paperclip className="h-4 w-4" />
         </Button>
         <textarea
           ref={textareaRef}
           rows={1}
-          placeholder={replyTo ? `Replying to ${replyTo.author}…` : "Type a message… or paste / drop an image"}
+          placeholder={replyTo ? `Reply to ${replyTo.author}…` : "Message…"}
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={onKey}
           onPaste={onPaste}
-          className="flex-1 resize-none bg-secondary/60 border border-border rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 max-h-32 scrollbar-thin"
+          className="flex-1 resize-none bg-secondary/60 border border-border rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 max-h-32 scrollbar-thin leading-relaxed"
         />
         <Button
           type="button"
-          onClick={send}
+          onPointerDown={onSendPointerDown}
           disabled={!value.trim()}
-          className="shrink-0 h-11 w-11 p-0"
+          className="shrink-0 h-10 w-10 p-0"
           aria-label="Send"
         >
           <Send className="h-4 w-4" />
