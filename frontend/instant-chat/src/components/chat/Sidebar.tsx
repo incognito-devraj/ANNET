@@ -16,10 +16,11 @@ function colorFor(name: string) {
   return `hsl(${h} 70% 45%)`;
 }
 
-export default function Sidebar({ users, currentName }: Props) {
+// Exported so it can be reused inside the mobile Sheet drawer
+export function SidebarContent({ users, currentName }: Props) {
   return (
-    <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-border bg-card/40 backdrop-blur">
-      <div className="px-4 h-14 flex items-center gap-2 border-b border-border">
+    <>
+      <div className="px-4 h-14 flex items-center gap-2 border-b border-border shrink-0">
         <Users className="h-4 w-4 text-primary" />
         <h2 className="text-sm font-semibold">
           Online <span className="text-muted-foreground">({users.length})</span>
@@ -48,7 +49,7 @@ export default function Sidebar({ users, currentName }: Props) {
               </div>
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium truncate">
-                  {u.name} {isMe && <span className="text-primary text-xs">(you)</span>}
+                  {u.name}{isMe && <span className="text-primary text-xs ml-1">(you)</span>}
                 </div>
               </div>
               <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_hsl(var(--primary))]" />
@@ -56,6 +57,15 @@ export default function Sidebar({ users, currentName }: Props) {
           );
         })}
       </div>
+    </>
+  );
+}
+
+// Desktop sidebar — hidden on mobile
+export default function Sidebar({ users, currentName }: Props) {
+  return (
+    <aside className="hidden md:flex w-64 shrink-0 flex-col border-r border-border bg-card/40 backdrop-blur">
+      <SidebarContent users={users} currentName={currentName} />
     </aside>
   );
 }

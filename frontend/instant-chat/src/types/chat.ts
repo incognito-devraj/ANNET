@@ -8,6 +8,19 @@ export type FileMeta = {
   size: number;
 };
 
+export type Reaction = {
+  emoji: string;
+  count: number;
+  // names of users who reacted (client-side only, current session)
+  reactedByMe: boolean;
+};
+
+export type ReplyTo = {
+  id: string;
+  author: string;
+  preview: string; // first 80 chars of the original message
+};
+
 export type ChatMessage =
   | {
       kind: "message";
@@ -16,6 +29,17 @@ export type ChatMessage =
       message: string;
       mine: boolean;
       ts: number;
+      replyTo?: ReplyTo;
+      reactions?: Record<string, Reaction>;
+    }
+  | {
+      kind: "code";
+      id: string;
+      author: string;
+      code: string;
+      mine: boolean;
+      ts: number;
+      reactions?: Record<string, Reaction>;
     }
   | {
       kind: "system";
@@ -32,6 +56,7 @@ export type ChatMessage =
       offer: unknown;
       received: boolean;
       ts: number;
+      reactions?: Record<string, Reaction>;
     }
   | {
       kind: "image";
@@ -41,4 +66,5 @@ export type ChatMessage =
       dataUrl: string;
       fileMeta: FileMeta;
       ts: number;
+      reactions?: Record<string, Reaction>;
     };

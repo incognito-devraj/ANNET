@@ -42,6 +42,15 @@ function setupSocket(io) {
     });
 
     // -------------------------------------------------------------------------
+    // send_image — small file/image relay (≤5 MB, base64 data URL)
+    // -------------------------------------------------------------------------
+    socket.on('send_image', ({ room, author, dataUrl, fileMeta }) => {
+      console.log(`[socket] send_image — room: "${room}", author: "${author}", file: "${fileMeta?.name}"`);
+      // Relay to everyone in the room except the sender
+      socket.to(room).emit('receive_image', { author, dataUrl, fileMeta });
+    });
+
+    // -------------------------------------------------------------------------
     // Task 4.3 — WebRTC signaling handlers
     // -------------------------------------------------------------------------
     socket.on('webrtc_offer', ({ room, offer, fileMeta }) => {

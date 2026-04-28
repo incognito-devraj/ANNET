@@ -8,22 +8,17 @@ const VALID = /^[A-Za-z0-9_]{1,24}$/;
 
 export default function Landing() {
   const navigate = useNavigate();
-  const [name, setName] = useState("");
   const [room, setRoom] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (!VALID.test(name)) {
-      setError("Nickname: 1-24 chars, letters, numbers, underscores only.");
-      return;
-    }
     if (!VALID.test(room)) {
       setError("Room: 1-24 chars, letters, numbers, underscores only.");
       return;
     }
-    navigate(`/chat?name=${encodeURIComponent(name)}&room=${encodeURIComponent(room)}`);
+    navigate(`/anonet/${encodeURIComponent(room)}`);
   };
 
   return (
@@ -34,7 +29,7 @@ export default function Landing() {
             <VenetianMask className="h-7 w-7 text-primary" />
           </div>
           <h1 className="text-4xl font-bold tracking-tight">
-            Ano<span className="text-primary">net</span>
+            An<span className="text-primary">net</span>
           </h1>
           <p className="text-muted-foreground mt-2 text-sm flex items-center gap-1.5">
             <Sparkles className="h-3.5 w-3.5" />
@@ -47,19 +42,9 @@ export default function Landing() {
           className="bg-card/70 backdrop-blur border border-border rounded-2xl p-6 space-y-4 shadow-2xl"
         >
           <div className="space-y-2">
-            <label className="text-sm font-medium text-muted-foreground">Nickname</label>
-            <Input
-              autoFocus
-              placeholder="e.g. shadow_42"
-              value={name}
-              maxLength={24}
-              onChange={(e) => setName(e.target.value)}
-              className="bg-secondary/60 border-border h-11"
-            />
-          </div>
-          <div className="space-y-2">
             <label className="text-sm font-medium text-muted-foreground">Room</label>
             <Input
+              autoFocus
               placeholder="e.g. lounge"
               value={room}
               maxLength={24}
