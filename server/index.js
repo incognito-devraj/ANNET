@@ -10,11 +10,16 @@ const { setupSocket } = require('./socket');
 const app = express();
 const server = http.createServer(app);
 
-// Allow any origin on port 8080 (covers localhost and LAN IPs like 192.168.x.x)
+// Allow Vercel frontend, localhost dev, and LAN access
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (e.g. mobile apps, curl) or any port-8080 host
-    if (!origin || origin.includes(':8080') || origin.includes('localhost')) {
+    if (
+      !origin ||
+      origin.includes('vercel.app') ||
+      origin.includes('onrender.com') ||
+      origin.includes('localhost') ||
+      origin.includes(':8080')
+    ) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));

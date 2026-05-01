@@ -18,7 +18,7 @@ export default function Landing() {
       setError("Room: 1-24 chars, letters, numbers, underscores only.");
       return;
     }
-    navigate(`/anonet/${encodeURIComponent(room)}`);
+    navigate(`/${encodeURIComponent(room)}`);
   };
 
   return (

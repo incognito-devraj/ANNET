@@ -52,9 +52,11 @@ export default function ChatPage() {
   const navigate = useNavigate();
   const room = roomParam ?? "";
 
+  // Nickname lives only in React state — never persisted anywhere
   const [name, setName] = useState("");
   const [nameInput, setNameInput] = useState("");
   const [nameError, setNameError] = useState<string | null>(null);
+  // Always start at the nickname prompt — no auto-join from URL or storage
   const [joined, setJoined] = useState(false);
 
   const [users, setUsers] = useState<ChatUser[]>([]);
@@ -279,6 +281,7 @@ export default function ChatPage() {
       setNameError("1-24 chars, letters, numbers, underscores only.");
       return;
     }
+    // Nickname stays in memory only — no localStorage, no URL mutation
     setName(nameInput);
     setJoined(true);
   };
@@ -475,7 +478,7 @@ export default function ChatPage() {
   };
 
   const copyInviteLink = () => {
-    const url = `${window.location.origin}/anonet/${encodeURIComponent(room)}`;
+    const url = `${window.location.origin}/${encodeURIComponent(room)}`;
     navigator.clipboard.writeText(url).then(() => {
       setLinkCopied(true);
       setTimeout(() => setLinkCopied(false), 2000);
