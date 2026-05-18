@@ -2,7 +2,7 @@
  * WebRTC P2P file transfer — security-first implementation.
  *
  * Security measures:
- * 1. Max file size: 100 MB hard cap
+ * 1. Max file size: 50 MB hard cap
  * 2. MIME type allowlist — only safe types accepted
  * 3. File extension blocklist — double-checks the filename
  * 4. Receiver must explicitly click "Accept & Download" — no auto-download
@@ -14,7 +14,7 @@
  * - answer and ice_candidate are routed directly to the target socket (not broadcast)
  */
 
-export const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100 MB
+export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
 
 const ALLOWED_MIME_PREFIXES = [
   "image/",
@@ -53,7 +53,7 @@ export type FileSecurityResult = { ok: true } | { ok: false; reason: string };
 
 export function checkFileSecurity(name: string, size: number, mimeType: string): FileSecurityResult {
   if (size > MAX_FILE_SIZE) {
-    return { ok: false, reason: `File exceeds the 100 MB limit (${(size / 1024 / 1024).toFixed(1)} MB).` };
+      return { ok: false, reason: `File exceeds the 50 MB limit (${(size / 1024 / 1024).toFixed(1)} MB).` };
   }
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   if (BLOCKED_EXTENSIONS.has(ext)) {
@@ -190,8 +190,12 @@ export async function createSenderPeer(
     callbacks.onComplete(new Blob(), ""); // signal completion to sender side
   };
 
-  dc.onerror = () => {
-    if (completed || failed) return;
+  dc.onerror = (ev) => {
+    // Suppress errors that fire after all chunks were sent — the receiver
+    // closes the channel once it has assembled the full file, which can
+    // trigger an onerror on the sender side even though the transfer
+    // succeeded. Only surface the error if we haven't finished sending.
+    if (completed || failed || sentAllChunks) return;
     failed = true;
     callbacks.onError("Data channel error on sender side.");
   };

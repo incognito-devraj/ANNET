@@ -9,13 +9,6 @@ export type FileMeta = {
   mimeType?: string;
 };
 
-export type Reaction = {
-  emoji: string;
-  count: number;
-  // names of users who reacted (client-side only, current session)
-  reactedByMe: boolean;
-};
-
 export type ReplyTo = {
   id: string;
   author: string;
@@ -31,7 +24,6 @@ export type ChatMessage =
       mine: boolean;
       ts: number;
       replyTo?: ReplyTo;
-      reactions?: Record<string, Reaction>;
     }
   | {
       kind: "code";
@@ -40,7 +32,7 @@ export type ChatMessage =
       code: string;
       mine: boolean;
       ts: number;
-      reactions?: Record<string, Reaction>;
+      replyTo?: ReplyTo;
     }
   | {
       kind: "system";
@@ -62,15 +54,14 @@ export type ChatMessage =
       transferPercent?: number;
       transferError?: string;
       downloadBlob?: Blob;
-      reactions?: Record<string, Reaction>;
     }
   | {
-      kind: "image";
+      kind: "media";
       id: string;
       author: string;
       mine: boolean;
       dataUrl: string;
       fileMeta: FileMeta;
       ts: number;
-      reactions?: Record<string, Reaction>;
+      replyTo?: ReplyTo;
     };

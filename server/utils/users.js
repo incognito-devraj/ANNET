@@ -1,77 +1,69 @@
-// server/utils/users.js — in-memory user store
-// Exports: addUser, removeUser, getUser, getUsersInRoom
+// server/utils/users.js
+// In-memory user store with O(1) duplicate checks per room.
 
 const NICKNAME_MAX_LENGTH = 24;
 const NICKNAME_PATTERN = /^[a-zA-Z0-9_]+$/;
 
-// Module-level in-memory store
-const users = [];
+const usersById = new Map();
+const roomMembers = new Map();
 
-/**
- * Add a user to the store after validating the nickname.
- * @param {string} id   - Socket ID (unique per connection)
- * @param {string} name - Nickname (1–24 chars, [a-zA-Z0-9_])
- * @param {string} room - Room name the user is joining
- * @returns {{ id, name, room }} on success, or { error: string } on validation failure
- */
+function getRoomMap(room) {
+  let members = roomMembers.get(room);
+  if (!members) {
+    members = new Map();
+    roomMembers.set(room, members);
+  }
+  return members;
+}
+
 function addUser(id, name, room) {
-  console.log(`[users] addUser called — id: ${id}, name: "${name}", room: "${room}"`);
-
   if (!name || name.length > NICKNAME_MAX_LENGTH) {
-    const msg = "Nickname must be 24 characters or fewer.";
-    console.log(`[users] addUser validation failed (length): "${name}"`);
-    return { error: msg };
+    return { error: "Nickname must be 24 characters or fewer." };
   }
 
   if (!NICKNAME_PATTERN.test(name)) {
-    const msg = "Nickname may only contain letters, numbers, and underscores.";
-    console.log(`[users] addUser validation failed (chars): "${name}"`);
-    return { error: msg };
+    return { error: "Nickname may only contain letters, numbers, and underscores." };
+  }
+
+  const members = getRoomMap(room);
+  if (members.has(name)) {
+    return { error: "Nickname already taken in this room." };
+  }
+
+  const existingUser = usersById.get(id);
+  if (existingUser) {
+    removeUser(id);
   }
 
   const user = { id, name, room };
-  users.push(user);
-  console.log(`[users] addUser success — store size: ${users.length}`);
+  usersById.set(id, user);
+  members.set(name, user);
   return user;
 }
 
-/**
- * Remove a user from the store by socket ID.
- * @param {string} id - Socket ID to remove
- * @returns {{ id, name, room }} the removed User, or undefined if not found
- */
 function removeUser(id) {
-  console.log(`[users] removeUser called — id: ${id}`);
-  const index = users.findIndex((u) => u.id === id);
-  if (index === -1) {
-    console.log(`[users] removeUser — id not found: ${id}`);
-    return undefined;
-  }
-  const [removed] = users.splice(index, 1);
-  console.log(`[users] removeUser success — removed: "${removed.name}", store size: ${users.length}`);
-  return removed;
-}
+  const user = usersById.get(id);
+  if (!user) return undefined;
 
-/**
- * Look up a user by socket ID.
- * @param {string} id - Socket ID to look up
- * @returns {{ id, name, room }} the matching User, or undefined if not found
- */
-function getUser(id) {
-  const user = users.find((u) => u.id === id);
-  console.log(`[users] getUser — id: ${id}, found: ${user ? `"${user.name}"` : "none"}`);
+  usersById.delete(id);
+  const members = roomMembers.get(user.room);
+  if (members) {
+    members.delete(user.name);
+    if (members.size === 0) {
+      roomMembers.delete(user.room);
+    }
+  }
+
   return user;
 }
 
-/**
- * Get all users currently in a given room.
- * @param {string} room - Room name to filter by
- * @returns {{ id, name, room }[]} array of User records in that room
- */
+function getUser(id) {
+  return usersById.get(id);
+}
+
 function getUsersInRoom(room) {
-  const result = users.filter((u) => u.room === room);
-  console.log(`[users] getUsersInRoom — room: "${room}", count: ${result.length}`);
-  return result;
+  const members = roomMembers.get(room);
+  return members ? Array.from(members.values()) : [];
 }
 
 module.exports = { addUser, removeUser, getUser, getUsersInRoom };

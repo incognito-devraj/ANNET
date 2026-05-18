@@ -1,15 +1,27 @@
 import { io, Socket } from "socket.io-client";
 
-// Production backend URL (Render)
-// Falls back to same-host:3001 for local development
-const BACKEND_URL =
-  import.meta.env.VITE_BACKEND_URL ??
-  `${window.location.protocol}//${window.location.hostname}:3001`;
+const DEFAULT_PRODUCTION_BACKEND_URL = "https://annet-q0ai.onrender.com";
+
+function getBackendUrl() {
+  const configuredUrl = import.meta.env.VITE_BACKEND_URL?.trim();
+  if (configuredUrl) return configuredUrl;
+
+  const { hostname, protocol } = window.location;
+  const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
+
+  if (!isLocalhost) return DEFAULT_PRODUCTION_BACKEND_URL;
+
+  return `${protocol}//${hostname}:3001`;
+}
+
+const BACKEND_URL = getBackendUrl();
 
 // Singleton socket — created once at module load, never recreated.
 export const socket: Socket = io(BACKEND_URL, {
   autoConnect: false,
   transports: ["websocket", "polling"],
+  timeout: 8000,
+  tryAllTransports: true,
   reconnection: true,
   reconnectionAttempts: Infinity,
   reconnectionDelay: 1000,

@@ -120,57 +120,66 @@ All colors MUST be HSL.
 }
 
 @layer utilities {
+  /* ── Chat container ─────────────────────────────────────────────────────── */
   .chat-container {
     position: relative;
     isolation: isolate;
     height: 100%;
     width: 100%;
     overflow: hidden;
-    background: hsl(226 28% 7%);
+    background: hsl(224 30% 5%);
   }
 
   .bg-layer,
   .overlay-layer,
-  .noise-layer {
+  .noise-layer,
+  .watermark-layer {
     position: absolute;
     inset: 0;
   }
 
+  /* ── Background: deep dark base + aurora glow ───────────────────────────── */
   .bg-layer {
     z-index: 0;
-    background-image:
-      radial-gradient(circle at top, hsl(160 90% 50% / 0.08), transparent 34%),
-      url("/annet_bg.webp");
-    background-size: cover, cover;
-    background-position: center, center;
-    background-repeat: no-repeat;
-    transform: scale(1.08);
-    animation: bgFloat 20s ease-in-out infinite alternate;
-    will-change: transform;
-    filter: saturate(1.12) brightness(0.88) contrast(1.04);
-  }
-
-  .overlay-layer {
-    z-index: 1;
     background:
-      linear-gradient(180deg, rgb(2 8 7 / 0.42), rgb(4 7 10 / 0.5)),
-      radial-gradient(circle at top, rgb(0 255 156 / 0.04), transparent 45%);
-    backdrop-filter: blur(1px);
-    -webkit-backdrop-filter: blur(4px);
+      radial-gradient(ellipse 100% 55% at 50% -5%,  hsl(158 100% 48% / 0.12), transparent 55%),
+      radial-gradient(ellipse 60%  50% at -5% 100%, hsl(240  70% 45% / 0.10), transparent 55%),
+      radial-gradient(ellipse 50%  40% at 100% 95%, hsl(195  80% 50% / 0.08), transparent 50%),
+      hsl(224 30% 4%);
+    transform: scale(1.06);
+    animation: bgFloat 26s ease-in-out infinite alternate;
+    will-change: transform;
   }
 
+  /* ── Tiled hacker icon pattern (WhatsApp-style) ─────────────────────────── */
+  /* SVG tile: 120×120px — hacker icons + scattered ANNET letters             */
   .noise-layer {
-    z-index: 2;
-    opacity: 0.045;
-    background-image:
-      radial-gradient(circle at 1px 1px, rgb(255 255 255 / 0.4) 1px, transparent 0),
-      linear-gradient(90deg, rgb(0 255 156 / 0.12) 1px, transparent 1px),
-      linear-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px);
-    background-size: 4px 4px, 28px 28px, 28px 28px;
-    mix-blend-mode: soft-light;
+    z-index: 1;
     pointer-events: none;
+    opacity: 1;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3C!-- Venetian mask (top-left) --%3E%3Cg transform='translate(14,14)' opacity='0.09' fill='none' stroke='%2300ff9c' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cellipse cx='10' cy='8' rx='10' ry='8'/%3E%3Cpath d='M0 8 Q5 12 10 8 Q15 12 20 8'/%3E%3Ccircle cx='6' cy='6' r='2.5'/%3E%3Ccircle cx='14' cy='6' r='2.5'/%3E%3Cpath d='M4 11 Q10 15 16 11'/%3E%3C/g%3E%3C!-- Terminal prompt (top-right) --%3E%3Cg transform='translate(74,10)' opacity='0.08' fill='none' stroke='%2300ff9c' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='0' y='0' width='22' height='16' rx='2'/%3E%3Cpath d='M3 5 L7 8 L3 11'/%3E%3Cpath d='M9 11 L15 11'/%3E%3C/g%3E%3C!-- Lock (mid-left) --%3E%3Cg transform='translate(8,54)' opacity='0.09' fill='none' stroke='%2300ff9c' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2' y='9' width='16' height='12' rx='2'/%3E%3Cpath d='M6 9 V6 A4 4 0 0 1 14 6 V9'/%3E%3Ccircle cx='10' cy='15' r='1.5'/%3E%3C/g%3E%3C!-- Eye (center) --%3E%3Cg transform='translate(50,50)' opacity='0.08' fill='none' stroke='%2300ff9c' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M0 8 Q10 0 20 8 Q10 16 0 8Z'/%3E%3Ccircle cx='10' cy='8' r='3'/%3E%3Ccircle cx='10' cy='8' r='1.2' fill='%2300ff9c' stroke='none' opacity='0.5'/%3E%3C/g%3E%3C!-- Skull (mid-right) --%3E%3Cg transform='translate(88,50)' opacity='0.08' fill='none' stroke='%2300ff9c' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 14 L4 11 Q0 8 0 5 A8 8 0 0 1 16 5 Q16 8 12 11 L12 14Z'/%3E%3Cpath d='M4 14 L12 14'/%3E%3Cpath d='M7 14 L7 16 M9 14 L9 16'/%3E%3Ccircle cx='5' cy='6' r='2'/%3E%3Ccircle cx='11' cy='6' r='2'/%3E%3C/g%3E%3C!-- Shield (bottom-left) --%3E%3Cg transform='translate(12,88)' opacity='0.08' fill='none' stroke='%2300ff9c' stroke-width='1.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M10 2 L18 5 L18 11 Q18 17 10 20 Q2 17 2 11 L2 5Z'/%3E%3Cpath d='M6 10 L9 13 L14 8'/%3E%3C/g%3E%3C!-- Fingerprint (bottom-center) --%3E%3Cg transform='translate(46,84)' opacity='0.07' fill='none' stroke='%2300ff9c' stroke-width='1.1' stroke-linecap='round'%3E%3Cpath d='M10 2 Q16 2 18 8 Q20 14 14 18'/%3E%3Cpath d='M10 5 Q14 5 15 9 Q16 13 12 16'/%3E%3Cpath d='M10 8 Q12 8 12 11 Q12 14 10 15'/%3E%3Cpath d='M4 18 Q2 14 4 9 Q6 4 10 3'/%3E%3Cpath d='M7 17 Q5 13 6 9 Q7 6 10 6'/%3E%3C/g%3E%3C!-- Wifi/signal (bottom-right) --%3E%3Cg transform='translate(84,86)' opacity='0.08' fill='none' stroke='%2300ff9c' stroke-width='1.2' stroke-linecap='round'%3E%3Cpath d='M2 10 Q10 2 18 10'/%3E%3Cpath d='M5 13 Q10 7 15 13'/%3E%3Cpath d='M8 16 Q10 13 12 16'/%3E%3Ccircle cx='10' cy='18' r='1.2' fill='%2300ff9c' stroke='none' opacity='0.6'/%3E%3C/g%3E%3C!-- ANNET text scattered --%3E%3Ctext x='38' y='36' font-family='monospace' font-size='5' fill='%2300ff9c' opacity='0.07' letter-spacing='3'%3EANNET%3C/text%3E%3Ctext x='60' y='78' font-family='monospace' font-size='4' fill='%2300ff9c' opacity='0.06' letter-spacing='2'%3EANNET%3C/text%3E%3C/svg%3E");
+    background-size: 120px 120px;
+    background-repeat: repeat;
   }
 
+  /* ── Overlay: vignette + depth ──────────────────────────────────────────── */
+  .overlay-layer {
+    z-index: 2;
+    background:
+      radial-gradient(ellipse 70% 20% at 50% 0%, hsl(158 100% 50% / 0.04), transparent 100%),
+      linear-gradient(to top,  hsl(224 30% 3% / 0.60) 0%, transparent 35%),
+      linear-gradient(to right, hsl(224 30% 3% / 0.25) 0%, transparent 15%),
+      linear-gradient(to left,  hsl(224 30% 3% / 0.25) 0%, transparent 15%);
+  }
+
+  /* watermark-layer kept for DOM compatibility but hidden */
+  .watermark-layer {
+    z-index: 2;
+    pointer-events: none;
+    display: none;
+  }
+
+  /* ── Chat content stack ─────────────────────────────────────────────────── */
   .chat-content {
     position: relative;
     z-index: 3;
@@ -179,61 +188,132 @@ All colors MUST be HSL.
     flex-direction: column;
   }
 
+  /* ── Message scroll area ────────────────────────────────────────────────── */
   .messages-scroll {
     position: relative;
+    /* Prevent any child from causing horizontal overflow */
+    overflow-x: hidden;
   }
 
-  .messages-scroll::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    background:
-      radial-gradient(circle at 50% 18%, rgb(0 255 156 / 0.04), transparent 18%),
-      linear-gradient(180deg, transparent 0%, rgb(3 10 11 / 0.06) 100%);
-  }
-
+  /* ── Compose bar ────────────────────────────────────────────────────────── */
   .chat-compose {
     position: relative;
-    z-index: 1;
-    background: linear-gradient(180deg, transparent, rgb(4 10 10 / 0.14));
+    z-index: 4;
+    background: hsl(224 28% 7% / 0.82);
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    border-top: 1px solid hsl(158 60% 50% / 0.10);
+    box-shadow: 0 -1px 0 hsl(0 0% 0% / 0.25), 0 -8px 32px hsl(224 30% 3% / 0.35);
   }
 
+  /* ── Message bubbles ────────────────────────────────────────────────────── */
   .message {
-    max-width: min(60%, 42rem);
-    border: 1px solid rgb(255 255 255 / 0.06);
+    /* Closer WhatsApp proportions */
+    width: fit-content;
+    min-width: 64px;
+    max-width: min(72%, 30rem);
+    border-radius: 1.15rem;
+    padding: 0.56rem 0.78rem 0.42rem;
+    align-self: flex-start;
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    font-size: 1rem;
+    line-height: 1.34;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    border: 1px solid hsl(0 0% 100% / 0.06);
     box-shadow:
-      0 10px 30px rgb(0 0 0 / 0.18),
-      inset 0 1px 0 rgb(255 255 255 / 0.04);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+      0 1px 3px  hsl(0 0% 0% / 0.26),
+      0 3px 12px hsl(0 0% 0% / 0.12),
+      inset 0 1px 0 hsl(0 0% 100% / 0.06);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    transition: box-shadow 0.15s ease, transform 0.15s ease;
   }
 
   .message.sent {
-    background: #00ff9c20;
+    background: linear-gradient(180deg, hsl(156 64% 23% / 0.96), hsl(156 60% 20% / 0.98));
+    border-color: hsl(158 80% 50% / 0.18);
     box-shadow:
-      0 10px 30px rgb(0 0 0 / 0.22),
-      0 0 24px rgb(0 255 156 / 0.08),
-      inset 0 1px 0 rgb(255 255 255 / 0.06);
+      0 1px 3px  hsl(0 0% 0% / 0.32),
+      0 4px 14px hsl(0 0% 0% / 0.18),
+      inset 0 1px 0 hsl(158 100% 80% / 0.08);
+  }
+
+  .message.sent:hover {
+    box-shadow:
+      0 1px 3px  hsl(0 0% 0% / 0.34),
+      0 5px 16px hsl(0 0% 0% / 0.2),
+      0 0 12px hsl(158 80% 50% / 0.08),
+      inset 0 1px 0 hsl(158 100% 80% / 0.10);
   }
 
   .message.received {
-    background: #ffffff10;
+    background: hsl(225 18% 13% / 0.94);
+    border-color: hsl(0 0% 100% / 0.07);
   }
 
+  .message-copy {
+    display: inline;
+  }
+
+  .message-body {
+    display: inline;
+    margin: 0;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    padding-right: 0.35rem;
+  }
+
+  .message-time {
+    display: inline-block;
+    margin-left: 0.5rem;
+    vertical-align: bottom;
+    white-space: nowrap;
+    font-size: 0.72rem;
+    line-height: 1;
+    color: hsl(0 0% 100% / 0.48);
+  }
+
+  .message.received:hover {
+    box-shadow:
+      0 1px 4px  hsl(0 0% 0% / 0.28),
+      0 6px 22px hsl(0 0% 0% / 0.16),
+      inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  }
+
+  /* ── Reply scroll-to highlight flash ────────────────────────────────────── */
+  @keyframes msgHighlight {
+    0%   { box-shadow: 0 0 0 2px hsl(158 100% 50% / 0.6), 0 0 20px hsl(158 100% 50% / 0.3); }
+    100% { box-shadow: none; }
+  }
+
+  .msg-highlight {
+    animation: msgHighlight 1.6s ease-out forwards;
+  }
+
+  /* ── Anonymous panel ────────────────────────────────────────────────────── */
   .anonymous-panel {
     background:
-      linear-gradient(180deg, hsl(0 46% 10% / 0.92), hsl(0 42% 8% / 0.95)),
-      radial-gradient(circle at top right, hsl(0 90% 54% / 0.1), transparent 40%);
-    box-shadow: inset 0 1px 0 hsl(0 100% 80% / 0.06), 0 12px 30px hsl(0 0% 0% / 0.2);
+      linear-gradient(160deg, hsl(0 50% 10% / 0.95), hsl(0 40% 7% / 0.98)),
+      radial-gradient(circle at top right, hsl(0 90% 54% / 0.12), transparent 45%);
+    box-shadow:
+      inset 0 1px 0 hsl(0 100% 80% / 0.07),
+      0 8px 24px hsl(0 0% 0% / 0.25);
   }
 
+  /* ── HUD arc ────────────────────────────────────────────────────────────── */
   .hud-arc {
     position: relative;
     background:
-      radial-gradient(circle, hsl(0 100% 60% / 0.26) 0 10%, transparent 10% 34%, hsl(0 100% 60% / 0.2) 34% 38%, transparent 38% 58%, hsl(0 100% 60% / 0.15) 58% 62%, transparent 62%),
-      conic-gradient(from 0deg, hsl(0 95% 58% / 0.05), hsl(0 95% 58% / 0.8), hsl(0 95% 58% / 0.08), hsl(0 95% 58% / 0.7), hsl(0 95% 58% / 0.05));
-    box-shadow: 0 0 22px hsl(0 95% 58% / 0.16);
+      radial-gradient(circle, hsl(0 100% 60% / 0.22) 0 10%, transparent 10% 34%,
+        hsl(0 100% 60% / 0.16) 34% 38%, transparent 38% 58%,
+        hsl(0 100% 60% / 0.12) 58% 62%, transparent 62%),
+      conic-gradient(from 0deg,
+        hsl(0 95% 58% / 0.04), hsl(0 95% 58% / 0.75),
+        hsl(0 95% 58% / 0.06), hsl(0 95% 58% / 0.65),
+        hsl(0 95% 58% / 0.04));
+    box-shadow: 0 0 18px hsl(0 95% 58% / 0.14);
   }
 
   .hud-arc::after {
@@ -241,40 +321,30 @@ All colors MUST be HSL.
     position: absolute;
     inset: 8px;
     border-radius: 9999px;
-    border: 1px solid hsl(0 100% 80% / 0.18);
+    border: 1px solid hsl(0 100% 80% / 0.16);
   }
 
   .hud-arc-inner {
-    background: radial-gradient(circle, hsl(0 100% 70% / 0.18), hsl(0 80% 18% / 0.22));
+    background: radial-gradient(circle, hsl(0 100% 70% / 0.16), hsl(0 80% 18% / 0.20));
   }
 
+  /* ── Background float ───────────────────────────────────────────────────── */
   @keyframes bgFloat {
-    0% {
-      transform: translate3d(0, 0, 0) scale(1.08);
-    }
-    100% {
-      transform: translate3d(-1.25%, -1%, 0) scale(1.1);
-    }
+    0%   { transform: translate3d(0,      0,    0) scale(1.06); }
+    33%  { transform: translate3d(-0.6%,  -0.4%, 0) scale(1.07); }
+    66%  { transform: translate3d( 0.4%,  -0.8%, 0) scale(1.065); }
+    100% { transform: translate3d(-1.0%,  -0.6%, 0) scale(1.08); }
   }
 
+  /* ── Mobile ─────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
-    .message {
-      max-width: 82%;
-    }
-
-    .bg-layer {
-      animation-duration: 24s;
-    }
-
-    .bg-layer,
-    .overlay-layer,
-    .noise-layer {
-      position: fixed;
-      inset: 0;
-    }
+    .message { max-width: 72%; font-size: 1rem; }
+    .bg-layer { animation-duration: 30s; }
+    .bg-layer, .overlay-layer, .noise-layer, .watermark-layer { position: fixed; inset: 0; }
   }
 
-  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 9999px; }
+  /* ── Scrollbar ──────────────────────────────────────────────────────────── */
+  .scrollbar-thin::-webkit-scrollbar       { width: 5px; height: 5px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: hsl(var(--border) / 0.8); border-radius: 9999px; }
   .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
 }

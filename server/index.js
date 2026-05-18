@@ -28,7 +28,13 @@ const corsOptions = {
   methods: ['GET', 'POST'],
 };
 
-const io = new Server(server, { cors: corsOptions });
+const io = new Server(server, {
+  cors: corsOptions,
+  // Detect dead connections faster — default pingTimeout is 20s, pingInterval 25s.
+  // Reducing these means a tab that closes abruptly is detected in ~8s instead of ~45s.
+  pingTimeout: 8000,
+  pingInterval: 5000,
+});
 
 app.use(cors(corsOptions));
 
