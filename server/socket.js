@@ -11,6 +11,11 @@ function setupSocket(io) {
       }
 
       socket.join(room);
+      socket.emit("join_success", {
+        room,
+        user: result,
+        users: getUsersInRoom(room),
+      });
       socket.to(room).emit("user_joined", { name: result.name });
       io.to(room).emit("room_users", getUsersInRoom(room));
     });

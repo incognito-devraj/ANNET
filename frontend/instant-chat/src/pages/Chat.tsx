@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback, FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { ArrowLeft, Check, Code2, FolderUp, Hash, Link, Menu, Users } from "lucide-react";
-import { socket, connectSocket, disconnectSocket } from "@/lib/socket";
+import { Code2, FolderUp, VenetianMask } from "lucide-react";
+import { socket, connectSocket, disconnectSocket, warmBackend } from "@/lib/socket";
 import {
   checkFileSecurity,
   getSecurityReason,
@@ -11,18 +11,17 @@ import {
   triggerDownload,
   PeerSession,
 } from "@/lib/webrtc";
-import Sidebar, { SidebarContent } from "@/components/chat/Sidebar";
+import { ChatTopBar, MemberPanel } from "@/components/chat/Sidebar";
 import MessageBubble from "@/components/chat/MessageBubble";
 import InputBar from "@/components/chat/InputBar";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import { ChatMessage, ChatUser, FileMeta, ReplyTo } from "@/types/chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 
 const VALID = /^[A-Za-z0-9_]{1,24}$/;
 const INLINE_LIMIT = 5 * 1024 * 1024; // 5 MB
-const JOIN_TIMEOUT_MS = 10000;
+const JOIN_TIMEOUT_MS = 25000;
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -67,9 +66,11 @@ export default function ChatPage() {
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
+  const [joinStatus, setJoinStatus] = useState("Waking up the chat server...");
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [sharingInvite, setSharingInvite] = useState(false);
   const [unread, setUnread] = useState(0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [messageFontSize, setMessageFontSize] = useState(15);
@@ -84,6 +85,7 @@ export default function ChatPage() {
   const socketIdMap = useRef<Map<string, string | ((id: string) => void)>>(new Map());
 
   useEffect(() => {
+    void warmBackend();
     connectSocket();
   }, []);
 
@@ -142,8 +144,10 @@ export default function ChatPage() {
   useEffect(() => {
     const onConnect = () => {
       setConnected(true);
+      setJoinStatus("Connected. Enter a nickname to continue.");
       if (!hasJoinedRoom.current && nameRef.current && roomRef.current) {
         hasJoinedRoom.current = true;
+        setJoinStatus(`Joining #${roomRef.current}...`);
         socket.emit("join_room", { name: nameRef.current, room: roomRef.current });
       }
     };
@@ -151,15 +155,28 @@ export default function ChatPage() {
     const onDisconnect = () => {
       setConnected(false);
       hasJoinedRoom.current = false;
+      if (!joinedRef.current) {
+        setJoinStatus("Connection dropped. Reconnecting...");
+      }
     };
 
     const onConnectError = () => {
       if (!joinedRef.current) {
-        setJoining(false);
-        setNameError("Couldn't reach the chat server. Please try again.");
-        hasJoinedRoom.current = false;
-        disconnectSocket();
+        setJoinStatus("Starting the chat server... this can take a few seconds.");
       }
+    };
+
+    const onJoinSuccess = (payload: { users?: unknown }) => {
+      if (Array.isArray(payload.users)) {
+        setUsers(payload.users.map((user) =>
+          typeof user === "string" ? { name: user } : { id: user?.id, name: user?.name ?? String(user) }
+        ));
+      }
+
+      setJoining(false);
+      setJoined(true);
+      setNameError(null);
+      setJoinStatus("Connected.");
     };
 
     const onRoomUsers = (list: unknown) => {
@@ -294,7 +311,7 @@ export default function ChatPage() {
         setNameError(text);
         setJoining(false);
         hasJoinedRoom.current = false;
-        disconnectSocket();
+        setJoinStatus("Enter a different nickname to continue.");
       } else {
         toast.error(text);
       }
@@ -311,6 +328,7 @@ export default function ChatPage() {
     socket.on("connect", onConnect);
     socket.on("connect_error", onConnectError);
     socket.on("disconnect", onDisconnect);
+    socket.on("join_success", onJoinSuccess);
     socket.on("room_users", onRoomUsers);
     socket.on("user_joined", onUserJoined);
     socket.on("user_left", onUserLeft);
@@ -327,6 +345,7 @@ export default function ChatPage() {
       socket.off("connect", onConnect);
       socket.off("connect_error", onConnectError);
       socket.off("disconnect", onDisconnect);
+      socket.off("join_success", onJoinSuccess);
       socket.off("room_users", onRoomUsers);
       socket.off("user_joined", onUserJoined);
       socket.off("user_left", onUserLeft);
@@ -347,9 +366,9 @@ export default function ChatPage() {
     const timer = window.setTimeout(() => {
       if (!joinedRef.current) {
         setJoining(false);
-        setNameError("Joining is taking too long. Please try again.");
+        setNameError("Server wake-up is taking longer than expected. Please try again in a moment.");
         hasJoinedRoom.current = false;
-        disconnectSocket();
+        setJoinStatus("Still reconnecting. You can retry now.");
       }
     }, JOIN_TIMEOUT_MS);
 
@@ -398,10 +417,12 @@ export default function ChatPage() {
     setName(chosenName);
     nameRef.current = chosenName;
     setJoining(true);
+    setJoinStatus(connected ? `Joining #${room}...` : "Connecting to chat server...");
 
     connectSocket();
     if (socket.connected && !hasJoinedRoom.current) {
       hasJoinedRoom.current = true;
+      setJoinStatus(`Joining #${room}...`);
       socket.emit("join_room", { name: chosenName, room });
     }
   };
@@ -609,8 +630,34 @@ export default function ChatPage() {
     const url = `${window.location.origin}/${encodeURIComponent(room)}`;
     navigator.clipboard.writeText(url).then(() => {
       setLinkCopied(true);
+      toast.success("Room link copied.");
       setTimeout(() => setLinkCopied(false), 2000);
     });
+  };
+
+  const shareInvite = async () => {
+    const url = `${window.location.origin}/${encodeURIComponent(room)}`;
+
+    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+      try {
+        setSharingInvite(true);
+        await navigator.share({
+          title: `Join #${room} on Annet`,
+          text: `Join my Annet room #${room}`,
+          url,
+        });
+      } catch (error) {
+        if ((error as DOMException)?.name !== "AbortError") {
+          toast.error("Couldn't open the share sheet. Link copied instead.");
+          copyInviteLink();
+        }
+      } finally {
+        setSharingInvite(false);
+      }
+      return;
+    }
+
+    copyInviteLink();
   };
 
   if (!VALID.test(room)) return null;
@@ -626,7 +673,9 @@ export default function ChatPage() {
             <h1 className="text-2xl font-bold tracking-tight">
               Joining <span className="text-primary">#{room}</span>
             </h1>
-            <p className="text-muted-foreground mt-1 text-sm">Pick a nickname to enter</p>
+            <p className="text-muted-foreground mt-1 text-sm">
+              {joining ? joinStatus : "Pick a nickname to enter"}
+            </p>
           </div>
           <form onSubmit={handleNicknameSubmit} className="bg-card/70 backdrop-blur border border-border rounded-2xl p-6 space-y-4 shadow-2xl">
             <div className="space-y-2">
@@ -646,8 +695,13 @@ export default function ChatPage() {
                 {nameError}
               </div>
             )}
+            {!nameError && !connected && (
+              <div className="text-sm text-emerald-100/80 bg-emerald-500/10 border border-emerald-400/20 rounded-md px-3 py-2">
+                {joinStatus}
+              </div>
+            )}
             <Button type="submit" disabled={joining} className="w-full h-11 text-base font-semibold">
-              {joining ? "Checking..." : "Enter Room"}
+              {joining ? "Joining..." : connected ? "Enter Room" : "Wake & Enter"}
             </Button>
           </form>
         </div>
@@ -656,15 +710,16 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="flex h-[100svh] md:h-[100dvh] overflow-hidden">
-      <Sidebar users={users} currentName={name} />
-
-      <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-        <SheetContent side="left" className="p-0 w-72 flex flex-col bg-card/95 backdrop-blur">
-          <SheetTitle className="sr-only">Online users</SheetTitle>
-          <SidebarContent users={users} currentName={name} />
-        </SheetContent>
-      </Sheet>
+    <div className="relative flex h-[100svh] md:h-[100dvh] overflow-hidden bg-black">
+      <MemberPanel
+        users={users}
+        currentName={name}
+        open={sidebarOpen}
+        mobile
+        topOffsetClassName="top-[72px]"
+        onClose={() => setSidebarOpen(false)}
+      />
+      <MemberPanel users={users} currentName={name} open={sidebarOpen} topOffsetClassName="top-[72px]" />
 
       <div className="flex-1 min-w-0 overflow-hidden">
         <main className="chat-container">
@@ -674,40 +729,15 @@ export default function ChatPage() {
           <div className="watermark-layer" aria-hidden="true" />
 
           <div className="chat-content">
-            <header
-              className="shrink-0 border-b border-white/10 bg-black/20 backdrop-blur-md flex items-center justify-center px-4 py-2 relative"
-              style={{ minHeight: "56px" }}
-            >
-              <div className="absolute left-2 flex items-center gap-1">
-                <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="md:hidden h-9 w-9" aria-label="Open user list">
-                  <Menu className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="icon" onClick={leave} aria-label="Leave" className="h-9 w-9">
-                  <ArrowLeft className="h-4 w-4" />
-                </Button>
-              </div>
-
-              <div className="flex flex-col items-center select-none">
-                <span className="text-[10px] font-mono tracking-[0.3em] text-white/20 uppercase leading-none">
-                  ANNET
-                </span>
-                <div className="flex items-center gap-1 mt-0.5">
-                  <Hash className="h-3.5 w-3.5 text-primary shrink-0" />
-                  <span className="text-sm font-semibold truncate max-w-[160px]">{room}</span>
-                  <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${connected ? "bg-primary" : "bg-destructive"}`} />
-                </div>
-              </div>
-
-              <div className="absolute right-2 flex items-center gap-1">
-                <Button variant="ghost" size="icon" onClick={copyInviteLink} aria-label="Copy invite link" className="h-9 w-9">
-                  {linkCopied ? <Check className="h-4 w-4 text-primary" /> : <Link className="h-4 w-4" />}
-                </Button>
-                <div className="flex items-center gap-1 text-xs text-muted-foreground pr-1">
-                  <Users className="h-3.5 w-3.5" />
-                  <span>{users.length}</span>
-                </div>
-              </div>
-            </header>
+            <ChatTopBar
+              room={room}
+              usersCount={users.length}
+              connected={connected}
+              sidebarOpen={sidebarOpen}
+              onToggleMembers={() => setSidebarOpen((current) => !current)}
+              onShareInvite={shareInvite}
+              onLeave={leave}
+            />
 
             <div ref={scrollRef} className="messages-scroll flex-1 overflow-y-auto scrollbar-thin px-3 md:px-6 py-4 overscroll-contain">
               <div className="max-w-5xl mx-auto">

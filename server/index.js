@@ -37,6 +37,9 @@ const io = new Server(server, {
 });
 
 app.use(cors(corsOptions));
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
 
 setupSocket(io);
 
