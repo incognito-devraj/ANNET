@@ -16,7 +16,7 @@ function getRoomMap(room) {
   return members;
 }
 
-function addUser(id, name, room) {
+function addUser(id, name, room, sessionId) {
   if (!name || name.length > NICKNAME_MAX_LENGTH) {
     return { error: "Nickname must be 24 characters or fewer." };
   }
@@ -35,10 +35,26 @@ function addUser(id, name, room) {
     removeUser(id);
   }
 
-  const user = { id, name, room };
+  const user = { id, name, room, sessionId };
   usersById.set(id, user);
   members.set(name, user);
   return user;
+}
+
+function rebindUser(oldId, newId) {
+  const user = usersById.get(oldId);
+  if (!user) return undefined;
+
+  usersById.delete(oldId);
+  const reboundUser = { ...user, id: newId };
+  usersById.set(newId, reboundUser);
+
+  const members = roomMembers.get(user.room);
+  if (members) {
+    members.set(user.name, reboundUser);
+  }
+
+  return reboundUser;
 }
 
 function removeUser(id) {
@@ -61,9 +77,27 @@ function getUser(id) {
   return usersById.get(id);
 }
 
+function getUserByName(room, name) {
+  const members = roomMembers.get(room);
+  return members?.get(name);
+}
+
+function getUserBySessionId(room, sessionId) {
+  if (!sessionId) return undefined;
+
+  const members = roomMembers.get(room);
+  if (!members) return undefined;
+
+  for (const user of members.values()) {
+    if (user.sessionId === sessionId) return user;
+  }
+
+  return undefined;
+}
+
 function getUsersInRoom(room) {
   const members = roomMembers.get(room);
   return members ? Array.from(members.values()) : [];
 }
 
-module.exports = { addUser, removeUser, getUser, getUsersInRoom };
+module.exports = { addUser, rebindUser, removeUser, getUser, getUserByName, getUserBySessionId, getUsersInRoom };

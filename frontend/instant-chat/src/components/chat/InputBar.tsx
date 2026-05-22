@@ -8,13 +8,24 @@ import { createZipFromFiles } from "@/lib/archive";
 type Props = {
   onSend: (text: string) => void;
   onFile: (file: File) => void;
+  onFilePickerOpen?: () => void;
+  onFileFlowSettled?: () => void;
   replyTo?: ReplyTo | null;
   onCancelReply?: () => void;
   onTyping?: () => void;
   onStopTyping?: () => void;
 };
 
-export default function InputBar({ onSend, onFile, replyTo, onCancelReply, onTyping, onStopTyping }: Props) {
+export default function InputBar({
+  onSend,
+  onFile,
+  onFilePickerOpen,
+  onFileFlowSettled,
+  replyTo,
+  onCancelReply,
+  onTyping,
+  onStopTyping,
+}: Props) {
   const [value, setValue] = useState("");
   const [dragging, setDragging] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -75,6 +86,7 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply, onTyp
 
   const cancelPreview = () => {
     setPendingFile(null);
+    onFileFlowSettled?.();
     if (fileRef.current) fileRef.current.value = "";
   };
 
@@ -177,6 +189,7 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply, onTyp
             onChange={(e) => {
               const file = e.target.files?.[0];
               if (file) stageFile(file);
+              else onFileFlowSettled?.();
               if (fileRef.current) fileRef.current.value = "";
             }}
           />
@@ -186,6 +199,9 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply, onTyp
             className="hidden"
             multiple
             onChange={(e) => {
+              if (!e.target.files?.length) {
+                onFileFlowSettled?.();
+              }
               void stageFolder(e.target.files);
             }}
           />
@@ -207,7 +223,10 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply, onTyp
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => fileRef.current?.click()}
+                onClick={() => {
+                  onFilePickerOpen?.();
+                  fileRef.current?.click();
+                }}
                 className="shrink-0 h-10 w-10 rounded-full border border-white/10 bg-white/[0.03] text-muted-foreground/80 hover:text-white hover:bg-white/[0.08] transition-all"
                 aria-label="Attach file"
               >
@@ -218,7 +237,10 @@ export default function InputBar({ onSend, onFile, replyTo, onCancelReply, onTyp
                 type="button"
                 variant="ghost"
                 size="icon"
-                onClick={() => folderRef.current?.click()}
+                onClick={() => {
+                  onFilePickerOpen?.();
+                  folderRef.current?.click();
+                }}
                 disabled={preparingFolder}
                 className="shrink-0 h-10 w-10 rounded-full border border-white/10 bg-white/[0.03] text-muted-foreground/80 hover:text-white hover:bg-white/[0.08] transition-all disabled:opacity-50"
                 aria-label="Attach folder"

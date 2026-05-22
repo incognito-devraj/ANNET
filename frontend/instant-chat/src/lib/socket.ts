@@ -60,3 +60,14 @@ export function connectSocket() {
 export function disconnectSocket() {
   socket.disconnect();
 }
+
+export function leaveSocketRoom(payload: { room: string; name: string; sessionId: string }) {
+  return new Promise<void>((resolve) => {
+    if (!socket.connected) {
+      resolve();
+      return;
+    }
+
+    socket.emit("leave_room", payload, () => resolve());
+  });
+}

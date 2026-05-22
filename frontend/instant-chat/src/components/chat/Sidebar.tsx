@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { LogOut, Shield, Share2, Users } from "lucide-react";
+import { Check, LogOut, Shield, Share2, Users } from "lucide-react";
 import { ChatUser } from "@/types/chat";
 
 type MemberPanelProps = {
@@ -22,6 +22,7 @@ type TopBarProps = {
   usersCount: number;
   connected: boolean;
   sidebarOpen: boolean;
+  shareCopied: boolean;
   onToggleMembers: () => void;
   onShareInvite: () => void;
   onLeave: () => void;
@@ -64,10 +65,10 @@ function ActionButton({ label, ariaLabel, icon, onClick, tone = "default" }: Act
       whileHover={{ y: -1, scale: 1.02 }}
       whileTap={{ scale: 0.94 }}
       transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
-      className="group relative flex min-w-[74px] flex-col items-center gap-1 overflow-hidden rounded-full outline-none"
+      className="group relative flex min-w-[64px] flex-col items-center gap-2 outline-none"
     >
       <span
-        className={`relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] md:h-10 md:w-10 ${toneClassName}`}
+        className={`relative flex h-9 w-9 items-center justify-center overflow-hidden rounded-full border bg-white/[0.04] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] lg:h-11 lg:w-11 lg:bg-white/[0.05] lg:shadow-[inset_0_1px_0_rgba(255,255,255,0.08),0_0_20px_rgba(120,255,220,0.10)] ${toneClassName}`}
       >
         <AnimatePresence mode="popLayout">
           <motion.span
@@ -83,7 +84,7 @@ function ActionButton({ label, ariaLabel, icon, onClick, tone = "default" }: Act
           {icon}
         </span>
       </span>
-      <span className={`text-[9px] leading-none tracking-[0.02em] ${tone === "danger" ? "text-[#e6b1b8]" : "text-[#d8d2c5]"}`}>
+      <span className={`text-[9px] leading-none tracking-[0.02em] lg:text-[10px] lg:tracking-[0.08em] ${tone === "danger" ? "text-[#e6b1b8]" : "text-[#d8d2c5]"}`}>
         {label}
       </span>
     </motion.button>
@@ -117,6 +118,7 @@ export function ChatTopBar({
   usersCount,
   connected,
   sidebarOpen,
+  shareCopied,
   onToggleMembers,
   onShareInvite,
   onLeave,
@@ -145,11 +147,11 @@ export function ChatTopBar({
           <button
             type="button"
             onClick={onToggleMembers}
-            className="flex min-w-0 flex-1 flex-col justify-end pb-2.5 pt-1 text-left outline-none"
+            className="flex min-w-0 flex-1 flex-col items-center justify-center text-center outline-none"
             aria-label={sidebarOpen ? "Close room members" : "Open room members"}
             aria-expanded={sidebarOpen}
           >
-            <div className="flex items-center gap-2">
+            <div className="flex max-w-full items-center justify-center gap-2">
               <span className="font-mono text-[13px] text-[#f3efe4]">#</span>
               <span className="truncate font-mono text-[19px] font-light tracking-[0.04em] text-[#f3efe4] [text-shadow:0_0_14px_rgba(243,239,228,0.12)]">
                 {room}
@@ -157,21 +159,21 @@ export function ChatTopBar({
               <span className={`h-2.5 w-2.5 rounded-full ${statusDotClassName}`} />
             </div>
 
-            <div className="mt-1.5 flex items-center gap-2 text-[11px] text-[#1a9e6e]">
+            <div className="mt-1.5 flex items-center justify-center gap-2 text-[11px] text-[#1a9e6e]">
               <Users className="h-3 w-3" />
               <span>{usersCount} {usersCount === 1 ? "member" : "members"}</span>
             </div>
           </button>
 
-          <div className="ml-2 flex shrink-0 items-center gap-4 pr-4">
+          <div className="mr-4 flex shrink-0 items-center gap-5">
             <ActionButton
-              label="Share invite"
+              label=""
               ariaLabel="Share room invite"
-              icon={<Share2 className="h-4 w-4" />}
+              icon={shareCopied ? <Check className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
               onClick={onShareInvite}
             />
             <ActionButton
-              label="Leave room"
+              label=""
               ariaLabel="Leave room"
               icon={<LogOut className="h-4 w-4" />}
               onClick={onLeave}
@@ -180,36 +182,51 @@ export function ChatTopBar({
           </div>
         </div>
 
-        <div className="flex h-full items-start justify-between gap-3 px-3 pt-2 lg:hidden">
-          <div className="flex min-w-0 flex-1 gap-3">
-            <AnnetBrandingButton open={sidebarOpen} onClick={onToggleMembers} />
+        <div className="flex h-full items-start justify-between gap-2 px-3 pt-2 lg:hidden">
+          <div className="flex min-w-0 flex-1 flex-col items-start justify-start overflow-hidden">
+            <motion.button
+              type="button"
+              aria-label={sidebarOpen ? "Close room members" : "Open room members"}
+              aria-expanded={sidebarOpen}
+              onClick={onToggleMembers}
+              whileHover={{ x: 1 }}
+              whileTap={{ scale: 0.985 }}
+              transition={{ duration: 0.16, ease: [0.22, 1, 0.36, 1] }}
+              className="inline-flex max-w-full items-start pl-0 pr-2 pt-0 outline-none"
+            >
+              <img
+                src="/final logo.webp"
+                alt="ANNET"
+                className="h-[36px] w-auto max-w-[160px] object-contain object-left"
+                draggable={false}
+              />
+            </motion.button>
 
             <button
               type="button"
               onClick={onToggleMembers}
-              className="min-w-0 flex-1 self-end pb-2 text-left outline-none"
+              className="mt-0.75 min-w-0 max-w-full pl-1.5 text-left outline-none"
               aria-label={sidebarOpen ? "Close room members" : "Open room members"}
               aria-expanded={sidebarOpen}
             >
-              <div className="flex items-center gap-2">
-                <span className="font-mono text-[12px] text-[#f3efe4]">#</span>
-                <span className="truncate font-mono text-[15px] font-light tracking-[0.04em] text-[#f3efe4]">
+              <div className="flex min-w-0 items-center justify-center gap-1.5 whitespace-nowrap">
+                <span className="shrink-0 font-mono text-[12px] text-[#f3efe4]">#</span>
+                <span className="truncate font-mono text-[10px] font-light tracking-[0.02em] text-[#f3efe4] [text-shadow:0_0_10px_rgba(243,239,228,0.1)]">
                   {room}
                 </span>
-                <span className={`h-2 w-2 rounded-full ${statusDotClassName}`} />
-              </div>
-              <div className="mt-1 flex items-center gap-2 text-[10px] text-[#1a9e6e]">
-                <Users className="h-3 w-3" />
-                <span>{usersCount} {usersCount === 1 ? "member" : "members"}</span>
+                <Users className="ml-3 h-3 w-3 shrink-0 text-[#1a9e6e]" />
+                <span className="shrink-0 text-[10px] text-[#1a9e6e]">
+                  {usersCount} {usersCount === 1 ? "member" : "members"}
+                </span>
               </div>
             </button>
           </div>
 
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-1.5 pt-0.5">
             <ActionButton
               label=""
               ariaLabel="Share room invite"
-              icon={<Share2 className="h-4 w-4" />}
+              icon={shareCopied ? <Check className="h-4 w-4" /> : <Share2 className="h-4 w-4" />}
               onClick={onShareInvite}
             />
             <ActionButton

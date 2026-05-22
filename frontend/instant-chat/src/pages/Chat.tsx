@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback, FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Code2, FolderUp, VenetianMask } from "lucide-react";
-import { socket, connectSocket, disconnectSocket, warmBackend } from "@/lib/socket";
+import { Code2, Copy, FolderUp, Mail, Send, VenetianMask } from "lucide-react";
+import { socket, connectSocket, disconnectSocket, leaveSocketRoom, warmBackend } from "@/lib/socket";
 import {
   checkFileSecurity,
   getSecurityReason,
@@ -22,9 +22,25 @@ import { Input } from "@/components/ui/input";
 const VALID = /^[A-Za-z0-9_]{1,24}$/;
 const INLINE_LIMIT = 5 * 1024 * 1024; // 5 MB
 const JOIN_TIMEOUT_MS = 25000;
+const SESSION_STORAGE_KEY = "annet-room-session-id";
+const ACTIVE_ROOM_STORAGE_KEY = "activeRoom";
+const USERNAME_STORAGE_KEY = "username";
+const EMIT_ACK_TIMEOUT_MS = 15000;
+const TEMPORARY_HIDDEN_GRACE_MS = 30000;
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function getClientSessionId() {
+  if (typeof window === "undefined") return uid();
+
+  const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
+  if (existing) return existing;
+
+  const next = uid();
+  window.localStorage.setItem(SESSION_STORAGE_KEY, next);
+  return next;
 }
 
 function isInlineMedia(file: File) {
@@ -32,6 +48,49 @@ function isInlineMedia(file: File) {
     file.type.startsWith("audio/") ||
     file.type.startsWith("video/");
   return isMedia && file.size <= INLINE_LIMIT;
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function copyTextFallback(value: string) {
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  textarea.style.pointerEvents = "none";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    return document.execCommand("copy");
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function WhatsAppIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-current">
+      <path d="M19.1 4.9A9.86 9.86 0 0 0 12 2a9.92 9.92 0 0 0-8.6 14.87L2 22l5.29-1.38A9.92 9.92 0 0 0 12 22a10 10 0 0 0 7.1-17.1ZM12 20.2a8.1 8.1 0 0 1-4.13-1.13l-.3-.18-3.14.82.84-3.06-.2-.31A8.15 8.15 0 1 1 12 20.2Zm4.47-6.08c-.24-.12-1.42-.7-1.64-.78-.22-.08-.38-.12-.54.12-.16.24-.62.78-.76.94-.14.16-.28.18-.52.06a6.62 6.62 0 0 1-1.95-1.2 7.3 7.3 0 0 1-1.36-1.7c-.14-.24-.02-.37.1-.5.1-.1.24-.28.36-.42.12-.14.16-.24.24-.4.08-.16.04-.3-.02-.42-.06-.12-.54-1.3-.74-1.78-.2-.48-.4-.42-.54-.42h-.46c-.16 0-.42.06-.64.3-.22.24-.84.82-.84 2s.86 2.32.98 2.48c.12.16 1.7 2.6 4.12 3.64.58.25 1.04.4 1.4.5.58.18 1.1.16 1.52.1.46-.06 1.42-.58 1.62-1.14.2-.56.2-1.04.14-1.14-.06-.1-.22-.16-.46-.28Z" />
+    </svg>
+  );
+}
+
+function TelegramIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-current">
+      <path d="M21.5 4.4 18.4 19c-.24 1.04-.88 1.3-1.78.82l-4.94-3.64-2.38 2.28c-.26.26-.48.48-.98.48l.36-5.06 9.2-8.3c.4-.36-.08-.56-.62-.2L6.02 12.44 1.2 10.94c-1.04-.32-1.06-1.04.22-1.54L20.3 2.12c.88-.32 1.64.2 1.2 2.28Z" />
+    </svg>
+  );
 }
 
 function playNotificationSound() {
@@ -70,6 +129,7 @@ export default function ChatPage() {
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [sharingInvite, setSharingInvite] = useState(false);
   const [unread, setUnread] = useState(0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -83,6 +143,61 @@ export default function ChatPage() {
   const roomRef = useRef(room);
   const peerRefs = useRef<Map<string, PeerSession>>(new Map());
   const socketIdMap = useRef<Map<string, string | ((id: string) => void)>>(new Map());
+  const clientSessionId = useRef(getClientSessionId());
+  const isUploadingRef = useRef(false);
+  const hiddenTimerRef = useRef<number | null>(null);
+  const roomReadyWaitersRef = useRef<Array<(ready: boolean) => void>>([]);
+
+  const emitWithAck = useCallback(<T,>(event: string, payload: unknown, timeoutMs = EMIT_ACK_TIMEOUT_MS) => (
+    new Promise<T>((resolve, reject) => {
+      let settled = false;
+      const timer = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        reject(new Error(`${event} timed out`));
+      }, timeoutMs);
+
+      socket.emit(event, payload, (response: T) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(response);
+      });
+    })
+  ), []);
+
+  const flushRoomReadyWaiters = useCallback((ready: boolean) => {
+    const waiters = roomReadyWaitersRef.current.splice(0);
+    for (const resolve of waiters) resolve(ready);
+  }, []);
+
+  const waitForRoomReady = useCallback((timeoutMs = 12000) => (
+    new Promise<boolean>((resolve) => {
+      if (socket.connected && joinedRef.current) {
+        resolve(true);
+        return;
+      }
+
+      connectSocket();
+
+      let settled = false;
+      const timer = window.setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        roomReadyWaitersRef.current = roomReadyWaitersRef.current.filter((entry) => entry !== onReady);
+        resolve(socket.connected && joinedRef.current);
+      }, timeoutMs);
+
+      const onReady = (ready: boolean) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(ready);
+      };
+
+      roomReadyWaitersRef.current.push(onReady);
+    })
+  ), []);
 
   useEffect(() => {
     void warmBackend();
@@ -91,12 +206,14 @@ export default function ChatPage() {
 
   useEffect(() => {
     return () => {
+      if (hiddenTimerRef.current) {
+        window.clearTimeout(hiddenTimerRef.current);
+      }
       peerRefs.current.forEach((session) => session.close());
       peerRefs.current.clear();
       socketIdMap.current.clear();
       hasJoinedRoom.current = false;
       joinedRef.current = false;
-      disconnectSocket();
     };
   }, []);
 
@@ -131,10 +248,16 @@ export default function ChatPage() {
 
   useEffect(() => {
     nameRef.current = name;
+    if (name) {
+      window.localStorage.setItem(USERNAME_STORAGE_KEY, name);
+    }
   }, [name]);
 
   useEffect(() => {
     roomRef.current = room;
+    if (room) {
+      window.localStorage.setItem(ACTIVE_ROOM_STORAGE_KEY, room);
+    }
   }, [room]);
 
   useEffect(() => {
@@ -142,22 +265,67 @@ export default function ChatPage() {
   }, [joined]);
 
   useEffect(() => {
+    const savedName = window.localStorage.getItem(USERNAME_STORAGE_KEY);
+    const savedRoom = window.localStorage.getItem(ACTIVE_ROOM_STORAGE_KEY);
+
+    if (savedRoom === room && savedName && !nameRef.current) {
+      setName(savedName);
+      setNameInput(savedName);
+      nameRef.current = savedName;
+    }
+  }, [room]);
+
+  useEffect(() => {
+    const clearHiddenTimer = () => {
+      if (hiddenTimerRef.current) {
+        window.clearTimeout(hiddenTimerRef.current);
+        hiddenTimerRef.current = null;
+      }
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        clearHiddenTimer();
+        connectSocket();
+        return;
+      }
+
+      clearHiddenTimer();
+      hiddenTimerRef.current = window.setTimeout(() => {
+        if (document.visibilityState === "hidden" && !isUploadingRef.current) {
+          setJoinStatus("App is in the background. Connection will resume automatically.");
+        }
+      }, TEMPORARY_HIDDEN_GRACE_MS);
+    };
+
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      clearHiddenTimer();
+    };
+  }, []);
+
+  useEffect(() => {
     const onConnect = () => {
       setConnected(true);
       setJoinStatus("Connected. Enter a nickname to continue.");
+      if (!nameRef.current || !roomRef.current) {
+        flushRoomReadyWaiters(true);
+        return;
+      }
       if (!hasJoinedRoom.current && nameRef.current && roomRef.current) {
         hasJoinedRoom.current = true;
         setJoinStatus(`Joining #${roomRef.current}...`);
-        socket.emit("join_room", { name: nameRef.current, room: roomRef.current });
+        socket.emit("join_room", { name: nameRef.current, room: roomRef.current, sessionId: clientSessionId.current });
+      } else {
+        flushRoomReadyWaiters(true);
       }
     };
 
     const onDisconnect = () => {
       setConnected(false);
       hasJoinedRoom.current = false;
-      if (!joinedRef.current) {
-        setJoinStatus("Connection dropped. Reconnecting...");
-      }
+      setJoinStatus(joinedRef.current ? "Connection recovering..." : "Connection dropped. Reconnecting...");
     };
 
     const onConnectError = () => {
@@ -177,6 +345,13 @@ export default function ChatPage() {
       setJoined(true);
       setNameError(null);
       setJoinStatus("Connected.");
+      if (nameRef.current) {
+        window.localStorage.setItem(USERNAME_STORAGE_KEY, nameRef.current);
+      }
+      if (roomRef.current) {
+        window.localStorage.setItem(ACTIVE_ROOM_STORAGE_KEY, roomRef.current);
+      }
+      flushRoomReadyWaiters(true);
     };
 
     const onRoomUsers = (list: unknown) => {
@@ -188,6 +363,7 @@ export default function ChatPage() {
         setJoining(false);
         setJoined(true);
       }
+      flushRoomReadyWaiters(true);
     };
 
     const onUserJoined = (payload: { name: string }) => {
@@ -312,6 +488,7 @@ export default function ChatPage() {
         setJoining(false);
         hasJoinedRoom.current = false;
         setJoinStatus("Enter a different nickname to continue.");
+        flushRoomReadyWaiters(false);
       } else {
         toast.error(text);
       }
@@ -358,7 +535,7 @@ export default function ChatPage() {
       socket.off("typing", onTyping);
       socket.off("stop_typing", onStopTyping);
     };
-  }, []);
+  }, [flushRoomReadyWaiters]);
 
   useEffect(() => {
     if (!joining || joined) return;
@@ -416,6 +593,8 @@ export default function ChatPage() {
 
     setName(chosenName);
     nameRef.current = chosenName;
+    window.localStorage.setItem(USERNAME_STORAGE_KEY, chosenName);
+    window.localStorage.setItem(ACTIVE_ROOM_STORAGE_KEY, room);
     setJoining(true);
     setJoinStatus(connected ? `Joining #${room}...` : "Connecting to chat server...");
 
@@ -423,11 +602,25 @@ export default function ChatPage() {
     if (socket.connected && !hasJoinedRoom.current) {
       hasJoinedRoom.current = true;
       setJoinStatus(`Joining #${room}...`);
-      socket.emit("join_room", { name: chosenName, room });
+      socket.emit("join_room", { name: chosenName, room, sessionId: clientSessionId.current });
     }
   };
 
-  const handleSend = (text: string) => {
+  const ensureRoomReady = useCallback(async () => {
+    if (socket.connected && joinedRef.current) return true;
+
+    const ready = await waitForRoomReady();
+    if (!ready) {
+      toast.error("Connection is recovering. Please try again in a moment.");
+      return false;
+    }
+
+    return true;
+  }, [waitForRoomReady]);
+
+  const handleSend = async (text: string) => {
+    if (!(await ensureRoomReady())) return;
+
     const CODE_PREFIX = /^code:\s*/i;
     const isCode = CODE_PREFIX.test(text);
     const payload = isCode ? text.replace(CODE_PREFIX, "") : text;
@@ -439,7 +632,6 @@ export default function ChatPage() {
       wireMessage = `__reply__${JSON.stringify(replyTo)}__endreply__\n${text}`;
     }
 
-    socket.emit("send_message", { id: messageId, room, author: name, message: wireMessage, ts });
     setMessages((prev) => [
       ...prev,
       isCode
@@ -447,12 +639,22 @@ export default function ChatPage() {
         : { kind: "message", id: messageId, author: name, message: payload, mine: true, ts, replyTo: replyTo ?? undefined },
     ]);
     setReplyTo(null);
+
+    try {
+      await emitWithAck<{ ok?: boolean }>("send_message", { id: messageId, room, author: name, message: wireMessage, ts });
+    } catch {
+      toast.error("Message couldn't be delivered. Please try again.");
+    }
   };
 
   const handleFile = async (file: File) => {
+    if (!(await ensureRoomReady())) return;
+
+    isUploadingRef.current = true;
     const fileMeta: FileMeta = { name: file.name, size: file.size, mimeType: file.type };
     const check = checkFileSecurity(file.name, file.size, file.type);
     if (!check.ok) {
+      isUploadingRef.current = false;
       toast.error(getSecurityReason(check));
       return;
     }
@@ -460,9 +662,14 @@ export default function ChatPage() {
     if (isInlineMedia(file)) {
       const messageId = uid();
       const ts = Date.now();
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = String(reader.result);
+      try {
+        const dataUrl = await readFileAsDataUrl(file);
+        if (!(await ensureRoomReady())) {
+          isUploadingRef.current = false;
+          return;
+        }
+
+        await emitWithAck<{ ok?: boolean }>("send_media", { id: messageId, room, author: name, dataUrl, fileMeta, ts, replyTo: replyTo ?? undefined });
         setMessages((prev) => [...prev, {
           kind: "media",
           id: messageId,
@@ -473,10 +680,13 @@ export default function ChatPage() {
           ts,
           replyTo: replyTo ?? undefined,
         }]);
-        socket.emit("send_media", { id: messageId, room, author: name, dataUrl, fileMeta, ts, replyTo: replyTo ?? undefined });
-      };
-      reader.readAsDataURL(file);
-      setReplyTo(null);
+        setReplyTo(null);
+      } catch (error) {
+        console.error("[media] send failed", error);
+        toast.error("Media couldn't be delivered. Please try again.");
+      } finally {
+        isUploadingRef.current = false;
+      }
       return;
     }
 
@@ -530,12 +740,14 @@ export default function ChatPage() {
             updateMessage({ transferState: "done", transferPercent: 100 });
             peerRefs.current.get(msgId)?.close();
             peerRefs.current.delete(msgId);
+            isUploadingRef.current = false;
           },
           onError: (error) => {
             toast.error(`Transfer failed: ${error}`);
             updateMessage({ transferState: "error", transferError: error });
             peerRefs.current.get(msgId)?.close();
             peerRefs.current.delete(msgId);
+            isUploadingRef.current = false;
           },
         },
       );
@@ -545,6 +757,7 @@ export default function ChatPage() {
     } catch (error) {
       toast.error("Failed to initiate file transfer.");
       console.error("[webrtc] sender init failed", error);
+      isUploadingRef.current = false;
     }
   };
 
@@ -622,42 +835,66 @@ export default function ChatPage() {
     peerRefs.current.clear();
     socketIdMap.current.clear();
     hasJoinedRoom.current = false;
-    disconnectSocket();
-    navigate("/");
-  };
+    joinedRef.current = false;
+    setJoined(false);
+    setConnected(false);
+    setUsers([]);
+    setTypingUsers([]);
+    setMessages([]);
+    isUploadingRef.current = false;
+    window.localStorage.removeItem(ACTIVE_ROOM_STORAGE_KEY);
+    window.localStorage.removeItem(USERNAME_STORAGE_KEY);
 
-  const copyInviteLink = () => {
-    const url = `${window.location.origin}/${encodeURIComponent(room)}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setLinkCopied(true);
-      toast.success("Room link copied.");
-      setTimeout(() => setLinkCopied(false), 2000);
+    void leaveSocketRoom({ room, name: nameRef.current, sessionId: clientSessionId.current }).finally(() => {
+      disconnectSocket();
+      navigate("/");
     });
   };
 
-  const shareInvite = async () => {
+  const copyInviteLink = async () => {
     const url = `${window.location.origin}/${encodeURIComponent(room)}`;
 
-    if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-      try {
-        setSharingInvite(true);
-        await navigator.share({
-          title: `Join #${room} on Annet`,
-          text: `Join my Annet room #${room}`,
-          url,
-        });
-      } catch (error) {
-        if ((error as DOMException)?.name !== "AbortError") {
-          toast.error("Couldn't open the share sheet. Link copied instead.");
-          copyInviteLink();
-        }
-      } finally {
-        setSharingInvite(false);
+    try {
+      if (window.isSecureContext && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+      } else if (!copyTextFallback(url)) {
+        throw new Error("Clipboard unavailable");
       }
-      return;
-    }
 
-    copyInviteLink();
+      setLinkCopied(true);
+      window.setTimeout(() => setLinkCopied(false), 1800);
+      return true;
+    } catch {
+      toast.error("Couldn't copy the room link automatically on this device.");
+      return false;
+    }
+  };
+
+  const getSharePayload = () => {
+    const url = `${window.location.origin}/${encodeURIComponent(room)}`;
+    const text = `Hey let's connect anonymously here in my ANNET room : ${url}`;
+    return { url, text };
+  };
+
+  const openShareTarget = (target: "whatsapp" | "telegram" | "email") => {
+    const { url, text } = getSharePayload();
+    const encodedText = encodeURIComponent(text);
+
+    const targetUrl = target === "whatsapp"
+      ? `https://wa.me/?text=${encodedText}`
+      : target === "telegram"
+        ? `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodedText}`
+        : `mailto:?subject=${encodeURIComponent("Join my ANNET room")}&body=${encodedText}`;
+
+    window.open(targetUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const shareInvite = async () => {
+    const copied = await copyInviteLink();
+    setShareDialogOpen(true);
+    if (copied) {
+      setTimeout(() => setLinkCopied(false), 2000);
+    }
   };
 
   if (!VALID.test(room)) return null;
@@ -734,10 +971,81 @@ export default function ChatPage() {
               usersCount={users.length}
               connected={connected}
               sidebarOpen={sidebarOpen}
+              shareCopied={linkCopied}
               onToggleMembers={() => setSidebarOpen((current) => !current)}
               onShareInvite={shareInvite}
               onLeave={leave}
             />
+
+            {shareDialogOpen && (
+              <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true" aria-label="Share room invite">
+                <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#11151c]/95 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-white/45">Share invite</div>
+                  <p className="mt-3 text-sm leading-6 text-white/88">
+                    Hey let&apos;s connect anonymously here in my ANNET room :
+                  </p>
+                  <p className="mt-2 break-all rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-2 text-sm text-emerald-200/90">
+                    {`${window.location.origin}/${encodeURIComponent(room)}`}
+                  </p>
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    <Button type="button" variant="outline" className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]" onClick={() => openShareTarget("whatsapp")}>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#25D366] text-white">
+                        <WhatsAppIcon />
+                      </span>
+                      <span className="text-left text-sm">WhatsApp</span>
+                    </Button>
+                    <Button type="button" variant="outline" className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]" onClick={() => openShareTarget("telegram")}>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#229ED9] text-white">
+                        <TelegramIcon />
+                      </span>
+                      <span className="text-left text-sm">Telegram</span>
+                    </Button>
+                    <Button type="button" variant="outline" className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]" onClick={() => openShareTarget("email")}>
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white">
+                        <Mail className="h-5 w-5" />
+                      </span>
+                      <span className="text-left text-sm">Email</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]"
+                      onClick={async () => {
+                        const { url, text } = getSharePayload();
+                        if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
+                          try {
+                            setSharingInvite(true);
+                            await navigator.share({ title: "Join my ANNET room", text, url });
+                          } catch (error) {
+                            if ((error as DOMException)?.name !== "AbortError") {
+                              toast.error("This device couldn't open the system share sheet.");
+                            }
+                          } finally {
+                            setSharingInvite(false);
+                          }
+                        } else {
+                          toast.error("System share isn't available here.");
+                        }
+                      }}
+                    >
+                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white">
+                        <Send className="h-5 w-5" />
+                      </span>
+                      <span className="text-left text-sm">More apps</span>
+                    </Button>
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <Button type="button" variant="ghost" className="text-white/70 hover:text-white" onClick={() => setShareDialogOpen(false)}>
+                      Close
+                    </Button>
+                    <Button type="button" className="inline-flex items-center gap-2 bg-primary/90 hover:bg-primary" onClick={async () => { await copyInviteLink(); }}>
+                      <Copy className="h-4 w-4" />
+                      Copy link
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             <div ref={scrollRef} className="messages-scroll flex-1 overflow-y-auto scrollbar-thin px-3 md:px-6 py-4 overscroll-contain">
               <div className="max-w-5xl mx-auto">
@@ -778,6 +1086,13 @@ export default function ChatPage() {
               <InputBar
                 onSend={handleSend}
                 onFile={handleFile}
+                onFilePickerOpen={() => {
+                  isUploadingRef.current = true;
+                  connectSocket();
+                }}
+                onFileFlowSettled={() => {
+                  isUploadingRef.current = false;
+                }}
                 replyTo={replyTo}
                 onCancelReply={() => setReplyTo(null)}
                 onTyping={() => socket.emit("typing", { name, room })}

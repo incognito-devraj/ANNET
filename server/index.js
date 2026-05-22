@@ -1,11 +1,11 @@
-// server/index.js — server entry point
+// server/index.js - server entry point
 // Wires Express, HTTP server, Socket.IO, and CORS together, then starts listening.
 
-const http = require('node:http');
-const express = require('express');
-const cors = require('cors');
-const { Server } = require('socket.io');
-const { setupSocket } = require('./socket');
+const http = require("node:http");
+const express = require("express");
+const cors = require("cors");
+const { Server } = require("socket.io");
+const { setupSocket } = require("./socket");
 
 const app = express();
 const server = http.createServer(app);
@@ -15,29 +15,29 @@ const corsOptions = {
   origin: (origin, callback) => {
     if (
       !origin ||
-      origin.includes('vercel.app') ||
-      origin.includes('onrender.com') ||
-      origin.includes('localhost') ||
-      origin.includes(':8080')
+      origin.includes("vercel.app") ||
+      origin.includes("onrender.com") ||
+      origin.includes("localhost") ||
+      origin.includes(":8080")
     ) {
       callback(null, true);
     } else {
-      callback(new Error('Not allowed by CORS'));
+      callback(new Error("Not allowed by CORS"));
     }
   },
-  methods: ['GET', 'POST'],
+  methods: ["GET", "POST"],
 };
 
 const io = new Server(server, {
   cors: corsOptions,
-  // Detect dead connections faster — default pingTimeout is 20s, pingInterval 25s.
-  // Reducing these means a tab that closes abruptly is detected in ~8s instead of ~45s.
-  pingTimeout: 8000,
-  pingInterval: 5000,
+  // Mobile share sheets and file pickers can pause a tab briefly without meaning the user truly left.
+  pingTimeout: 30000,
+  pingInterval: 10000,
+  maxHttpBufferSize: 50 * 1024 * 1024,
 });
 
 app.use(cors(corsOptions));
-app.get('/health', (_req, res) => {
+app.get("/health", (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
