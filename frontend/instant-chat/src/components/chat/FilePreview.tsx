@@ -57,7 +57,8 @@ export default function FilePreview({ file, onConfirm, onCancel }: Props) {
     ? (file.type.split("/")[1]?.toUpperCase() ?? "")
     : file.name.split(".").pop()?.toUpperCase() ?? "";
 
-  const isP2P = file.size > 5 * 1024 * 1024;
+  const isP2P = file.size > 5 * 1024 * 1024 ||
+    !(file.type.startsWith("image/") || file.type.startsWith("video/") || file.type.startsWith("audio/"));
 
   // ─── Styles ────────────────────────────────────────────────────────────────
   const S = {
@@ -269,7 +270,7 @@ export default function FilePreview({ file, onConfirm, onCancel }: Props) {
         <div style={S.header}>
           <div style={S.headerLeft}>
             <span style={S.title}>Send file</span>
-            <span style={S.badge}>{isP2P ? "P2P · WebRTC" : "Direct"}</span>
+            <span style={S.badge}>{isP2P ? "P2P · WebRTC" : "Socket · Direct"}</span>
           </div>
           <button style={S.closeBtn} onClick={onCancel} aria-label="Cancel">
             <X size={16} />

@@ -18,7 +18,7 @@
 The Annet backend is a minimal Node.js server that powers real-time anonymous chat. It handles:
 
 - **Room management** — users join named rooms with unique nicknames
-- **Message relay** — broadcasts chat messages and images to room members
+- **Message relay** — broadcasts chat messages and media to room members
 - **Typing indicators** — relays `typing` / `stop_typing` events between peers
 - **WebRTC signaling** — relays offer/answer/ICE payloads for peer-to-peer file transfer
 
@@ -63,7 +63,7 @@ Browser Client
 |---|---|---|
 | `join_room` | `{ name: string, room: string }` | Join a room with a nickname. Rejected if name is taken in that room, too long (>24 chars), or contains invalid characters. |
 | `send_message` | `{ room: string, author: string, message: string }` | Send a text message. Broadcast to room, excluding sender. |
-| `send_image` | `{ room: string, author: string, dataUrl: string, fileMeta: FileMeta }` | Send a small inline image (base64). Broadcast to room, excluding sender. |
+| `send_media` | `{ id: string, room: string, author: string, dataUrl: string, fileMeta: FileMeta, ts?: number, replyTo?: ReplyTo }` | Send inline media (base64). Broadcast to room, excluding sender. |
 | `typing` | `{ name: string, room: string }` | Signal that the user is composing a message. Broadcast to room, excluding sender. |
 | `stop_typing` | `{ name: string, room: string }` | Signal that the user stopped composing. Broadcast to room, excluding sender. |
 | `webrtc_offer` | `{ room: string, offer: RTCSessionDescriptionInit, fileMeta: FileMeta, msgId: string }` | Initiate a WebRTC file transfer. Relayed to room with `senderSocketId` appended. |
@@ -79,7 +79,7 @@ Browser Client
 | `user_left` | `{ name: string }` | A user disconnected. Broadcast to entire room. |
 | `room_users` | `User[]` | Current snapshot of all users in the room. Broadcast to entire room after join/leave. |
 | `receive_message` | `{ room: string, author: string, message: string }` | Relayed chat message. Sent to room, excluding sender. |
-| `receive_image` | `{ author: string, dataUrl: string, fileMeta: FileMeta }` | Relayed inline image. Sent to room, excluding sender. |
+| `receive_media` | `{ id: string, room: string, author: string, dataUrl: string, fileMeta: FileMeta, ts?: number, replyTo?: ReplyTo }` | Relayed inline media. Sent to room, excluding sender. |
 | `typing` | `{ name: string }` | A user is typing. Sent to room, excluding the typer. |
 | `stop_typing` | `{ name: string }` | A user stopped typing. Sent to room, excluding the typer. |
 | `webrtc_offer` | `{ offer, fileMeta, msgId, senderSocketId }` | Relayed WebRTC offer. Sent to room, excluding sender. |
@@ -215,3 +215,4 @@ As the platform scales, the server will gain an auth layer:
 <div align="center">
   <sub>Built with ⚡ by the Annet team</sub>
 </div>
+

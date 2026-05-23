@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, useCallback, FormEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Code2, Copy, FolderUp, Mail, Send, VenetianMask } from "lucide-react";
-import { socket, connectSocket, disconnectSocket, leaveSocketRoom, warmBackend } from "@/lib/socket";
+import { Code2, Copy, FolderUp, Mail, VenetianMask } from "lucide-react";
+import { socket, connectSocket, disconnectSocket, leaveSocketRoom } from "@/lib/socket";
 import {
   checkFileSecurity,
   getSecurityReason,
@@ -20,43 +20,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 const VALID = /^[A-Za-z0-9_]{1,24}$/;
-const INLINE_LIMIT = 5 * 1024 * 1024; // 5 MB
 const JOIN_TIMEOUT_MS = 25000;
-const SESSION_STORAGE_KEY = "annet-room-session-id";
-const ACTIVE_ROOM_STORAGE_KEY = "activeRoom";
-const USERNAME_STORAGE_KEY = "username";
 const EMIT_ACK_TIMEOUT_MS = 15000;
-const TEMPORARY_HIDDEN_GRACE_MS = 30000;
+// Small media threshold: ≤ 5 MB → socket (fire-and-forget), > 5 MB → WebRTC P2P
+const MAX_SOCKET_MEDIA_SIZE = 5 * 1024 * 1024;
+
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-function getClientSessionId() {
-  if (typeof window === "undefined") return uid();
-
-  const existing = window.localStorage.getItem(SESSION_STORAGE_KEY);
-  if (existing) return existing;
-
-  const next = uid();
-  window.localStorage.setItem(SESSION_STORAGE_KEY, next);
-  return next;
-}
-
-function isInlineMedia(file: File) {
-  const isMedia = file.type.startsWith("image/") ||
-    file.type.startsWith("audio/") ||
-    file.type.startsWith("video/");
-  return isMedia && file.size <= INLINE_LIMIT;
-}
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error ?? new Error("Failed to read file."));
-    reader.readAsDataURL(file);
-  });
 }
 
 function copyTextFallback(value: string) {
@@ -125,12 +96,11 @@ export default function ChatPage() {
   const [users, setUsers] = useState<ChatUser[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
-  const [joinStatus, setJoinStatus] = useState("Waking up the chat server...");
+  const [joinStatus, setJoinStatus] = useState("Connecting...");
   const [replyTo, setReplyTo] = useState<ReplyTo | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [sharingInvite, setSharingInvite] = useState(false);
   const [unread, setUnread] = useState(0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [messageFontSize, setMessageFontSize] = useState(15);
@@ -143,10 +113,7 @@ export default function ChatPage() {
   const roomRef = useRef(room);
   const peerRefs = useRef<Map<string, PeerSession>>(new Map());
   const socketIdMap = useRef<Map<string, string | ((id: string) => void)>>(new Map());
-  const clientSessionId = useRef(getClientSessionId());
-  const isUploadingRef = useRef(false);
-  const hiddenTimerRef = useRef<number | null>(null);
-  const roomReadyWaitersRef = useRef<Array<(ready: boolean) => void>>([]);
+
 
   const emitWithAck = useCallback(<T,>(event: string, payload: unknown, timeoutMs = EMIT_ACK_TIMEOUT_MS) => (
     new Promise<T>((resolve, reject) => {
@@ -166,49 +133,12 @@ export default function ChatPage() {
     })
   ), []);
 
-  const flushRoomReadyWaiters = useCallback((ready: boolean) => {
-    const waiters = roomReadyWaitersRef.current.splice(0);
-    for (const resolve of waiters) resolve(ready);
-  }, []);
-
-  const waitForRoomReady = useCallback((timeoutMs = 12000) => (
-    new Promise<boolean>((resolve) => {
-      if (socket.connected && joinedRef.current) {
-        resolve(true);
-        return;
-      }
-
-      connectSocket();
-
-      let settled = false;
-      const timer = window.setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        roomReadyWaitersRef.current = roomReadyWaitersRef.current.filter((entry) => entry !== onReady);
-        resolve(socket.connected && joinedRef.current);
-      }, timeoutMs);
-
-      const onReady = (ready: boolean) => {
-        if (settled) return;
-        settled = true;
-        window.clearTimeout(timer);
-        resolve(ready);
-      };
-
-      roomReadyWaitersRef.current.push(onReady);
-    })
-  ), []);
-
   useEffect(() => {
-    void warmBackend();
     connectSocket();
   }, []);
 
   useEffect(() => {
     return () => {
-      if (hiddenTimerRef.current) {
-        window.clearTimeout(hiddenTimerRef.current);
-      }
       peerRefs.current.forEach((session) => session.close());
       peerRefs.current.clear();
       socketIdMap.current.clear();
@@ -248,16 +178,10 @@ export default function ChatPage() {
 
   useEffect(() => {
     nameRef.current = name;
-    if (name) {
-      window.localStorage.setItem(USERNAME_STORAGE_KEY, name);
-    }
   }, [name]);
 
   useEffect(() => {
     roomRef.current = room;
-    if (room) {
-      window.localStorage.setItem(ACTIVE_ROOM_STORAGE_KEY, room);
-    }
   }, [room]);
 
   useEffect(() => {
@@ -265,60 +189,18 @@ export default function ChatPage() {
   }, [joined]);
 
   useEffect(() => {
-    const savedName = window.localStorage.getItem(USERNAME_STORAGE_KEY);
-    const savedRoom = window.localStorage.getItem(ACTIVE_ROOM_STORAGE_KEY);
-
-    if (savedRoom === room && savedName && !nameRef.current) {
-      setName(savedName);
-      setNameInput(savedName);
-      nameRef.current = savedName;
-    }
-  }, [room]);
-
-  useEffect(() => {
-    const clearHiddenTimer = () => {
-      if (hiddenTimerRef.current) {
-        window.clearTimeout(hiddenTimerRef.current);
-        hiddenTimerRef.current = null;
-      }
-    };
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
-        clearHiddenTimer();
-        connectSocket();
-        return;
-      }
-
-      clearHiddenTimer();
-      hiddenTimerRef.current = window.setTimeout(() => {
-        if (document.visibilityState === "hidden" && !isUploadingRef.current) {
-          setJoinStatus("App is in the background. Connection will resume automatically.");
-        }
-      }, TEMPORARY_HIDDEN_GRACE_MS);
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      clearHiddenTimer();
-    };
-  }, []);
-
-  useEffect(() => {
-    const onConnect = () => {
+      const onConnect = () => {
       setConnected(true);
       setJoinStatus("Connected. Enter a nickname to continue.");
-      if (!nameRef.current || !roomRef.current) {
-        flushRoomReadyWaiters(true);
-        return;
-      }
-      if (!hasJoinedRoom.current && nameRef.current && roomRef.current) {
-        hasJoinedRoom.current = true;
-        setJoinStatus(`Joining #${roomRef.current}...`);
-        socket.emit("join_room", { name: nameRef.current, room: roomRef.current, sessionId: clientSessionId.current });
-      } else {
-        flushRoomReadyWaiters(true);
+      // Only re-join if the user had already submitted their nickname
+      // (i.e. a mid-session reconnect). Do NOT auto-join on first connect —
+      // that would race with handleNicknameSubmit.
+      if (nameRef.current && roomRef.current && hasJoinedRoom.current) {
+        setJoinStatus(`Rejoining #${roomRef.current}...`);
+        socket.emit("join_room", {
+          name: nameRef.current,
+          room: roomRef.current,
+        });
       }
     };
 
@@ -330,7 +212,7 @@ export default function ChatPage() {
 
     const onConnectError = () => {
       if (!joinedRef.current) {
-        setJoinStatus("Starting the chat server... this can take a few seconds.");
+        setJoinStatus("Connection issue. Please try again.");
       }
     };
 
@@ -340,18 +222,10 @@ export default function ChatPage() {
           typeof user === "string" ? { name: user } : { id: user?.id, name: user?.name ?? String(user) }
         ));
       }
-
       setJoining(false);
       setJoined(true);
       setNameError(null);
       setJoinStatus("Connected.");
-      if (nameRef.current) {
-        window.localStorage.setItem(USERNAME_STORAGE_KEY, nameRef.current);
-      }
-      if (roomRef.current) {
-        window.localStorage.setItem(ACTIVE_ROOM_STORAGE_KEY, roomRef.current);
-      }
-      flushRoomReadyWaiters(true);
     };
 
     const onRoomUsers = (list: unknown) => {
@@ -363,7 +237,6 @@ export default function ChatPage() {
         setJoining(false);
         setJoined(true);
       }
-      flushRoomReadyWaiters(true);
     };
 
     const onUserJoined = (payload: { name: string }) => {
@@ -405,7 +278,14 @@ export default function ChatPage() {
       ]);
     };
 
-    const onReceiveMedia = (payload: { id: string; author: string; dataUrl: string; fileMeta: FileMeta; ts?: number; replyTo?: ReplyTo }) => {
+    const onReceiveMedia = (payload: {
+      id: string;
+      author: string;
+      dataUrl: string;
+      fileMeta: FileMeta;
+      ts?: number;
+      replyTo?: ReplyTo;
+    }) => {
       if (!tabFocused.current) setUnread((count) => count + 1);
       playNotificationSound();
       setMessages((prev) => [...prev, {
@@ -419,7 +299,6 @@ export default function ChatPage() {
         replyTo: payload.replyTo,
       }]);
     };
-
     const onWebrtcOffer = (payload: {
       offer: RTCSessionDescriptionInit;
       fileMeta: FileMeta;
@@ -488,7 +367,6 @@ export default function ChatPage() {
         setJoining(false);
         hasJoinedRoom.current = false;
         setJoinStatus("Enter a different nickname to continue.");
-        flushRoomReadyWaiters(false);
       } else {
         toast.error(text);
       }
@@ -535,7 +413,7 @@ export default function ChatPage() {
       socket.off("typing", onTyping);
       socket.off("stop_typing", onStopTyping);
     };
-  }, [flushRoomReadyWaiters]);
+  }, []);
 
   useEffect(() => {
     if (!joining || joined) return;
@@ -543,9 +421,9 @@ export default function ChatPage() {
     const timer = window.setTimeout(() => {
       if (!joinedRef.current) {
         setJoining(false);
-        setNameError("Server wake-up is taking longer than expected. Please try again in a moment.");
+        setNameError("Connection is taking longer than expected. Please try again.");
         hasJoinedRoom.current = false;
-        setJoinStatus("Still reconnecting. You can retry now.");
+        setJoinStatus("Please retry.");
       }
     }, JOIN_TIMEOUT_MS);
 
@@ -593,33 +471,29 @@ export default function ChatPage() {
 
     setName(chosenName);
     nameRef.current = chosenName;
-    window.localStorage.setItem(USERNAME_STORAGE_KEY, chosenName);
-    window.localStorage.setItem(ACTIVE_ROOM_STORAGE_KEY, room);
     setJoining(true);
     setJoinStatus(connected ? `Joining #${room}...` : "Connecting to chat server...");
 
+    // Mark that we've initiated a join so onConnect won't double-emit
+    hasJoinedRoom.current = true;
+
     connectSocket();
-    if (socket.connected && !hasJoinedRoom.current) {
-      hasJoinedRoom.current = true;
+    if (socket.connected) {
       setJoinStatus(`Joining #${room}...`);
-      socket.emit("join_room", { name: chosenName, room, sessionId: clientSessionId.current });
+      socket.emit("join_room", { name: chosenName, room });
     }
+    // If not yet connected, onConnect will fire and re-emit because
+    // hasJoinedRoom is true and nameRef/roomRef are set.
   };
 
-  const ensureRoomReady = useCallback(async () => {
+  const ensureRoomReady = useCallback(() => {
     if (socket.connected && joinedRef.current) return true;
-
-    const ready = await waitForRoomReady();
-    if (!ready) {
-      toast.error("Connection is recovering. Please try again in a moment.");
-      return false;
-    }
-
-    return true;
-  }, [waitForRoomReady]);
+    toast.error("Not connected to the room.");
+    return false;
+  }, []);
 
   const handleSend = async (text: string) => {
-    if (!(await ensureRoomReady())) return;
+    if (!ensureRoomReady()) return;
 
     const CODE_PREFIX = /^code:\s*/i;
     const isCode = CODE_PREFIX.test(text);
@@ -645,51 +519,61 @@ export default function ChatPage() {
     } catch {
       toast.error("Message couldn't be delivered. Please try again.");
     }
-  };
+    };
 
   const handleFile = async (file: File) => {
-    if (!(await ensureRoomReady())) return;
-
-    isUploadingRef.current = true;
     const fileMeta: FileMeta = { name: file.name, size: file.size, mimeType: file.type };
     const check = checkFileSecurity(file.name, file.size, file.type);
     if (!check.ok) {
-      isUploadingRef.current = false;
       toast.error(getSecurityReason(check));
       return;
     }
 
-    if (isInlineMedia(file)) {
-      const messageId = uid();
-      const ts = Date.now();
-      try {
-        const dataUrl = await readFileAsDataUrl(file);
-        if (!(await ensureRoomReady())) {
-          isUploadingRef.current = false;
-          return;
-        }
+    if (!ensureRoomReady()) return;
 
-        await emitWithAck<{ ok?: boolean }>("send_media", { id: messageId, room, author: name, dataUrl, fileMeta, ts, replyTo: replyTo ?? undefined });
-        setMessages((prev) => [...prev, {
-          kind: "media",
-          id: messageId,
-          author: name,
-          mine: true,
-          dataUrl,
-          fileMeta,
-          ts,
-          replyTo: replyTo ?? undefined,
-        }]);
-        setReplyTo(null);
-      } catch (error) {
-        console.error("[media] send failed", error);
-        toast.error("Media couldn't be delivered. Please try again.");
-      } finally {
-        isUploadingRef.current = false;
+    const isSmallMedia =
+      file.size <= MAX_SOCKET_MEDIA_SIZE &&
+      (file.type.startsWith("image/") || file.type.startsWith("video/") || file.type.startsWith("audio/"));
+
+    // ── Small media path: ≤ 5 MB image / video / audio → socket, fire-and-forget
+    if (isSmallMedia) {
+      const msgId = uid();
+      const ts = Date.now();
+      const currentReplyTo = replyTo ?? undefined;
+
+      // Read as data URL — only error we surface is a FileReader failure
+      let dataUrl: string;
+      try {
+        dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error("Failed to read file"));
+          reader.readAsDataURL(file);
+        });
+      } catch {
+        toast.error("Could not read the file.");
+        return;
       }
+
+      // Render instantly on sender's screen
+      setMessages((prev) => [...prev, {
+        kind: "media",
+        id: msgId,
+        author: name,
+        mine: true,
+        dataUrl,
+        fileMeta,
+        ts,
+        replyTo: currentReplyTo,
+      }]);
+      setReplyTo(null);
+
+      // Fire-and-forget — no ack, no timeout, no retry
+      socket.emit("send_media", { id: msgId, room, author: name, dataUrl, fileMeta, ts, replyTo: currentReplyTo });
       return;
     }
 
+    // ── Large file path: > 5 MB or non-media → WebRTC P2P ───────────────────
     const msgId = uid();
     setMessages((prev) => [...prev, {
       kind: "file_offer",
@@ -740,14 +624,12 @@ export default function ChatPage() {
             updateMessage({ transferState: "done", transferPercent: 100 });
             peerRefs.current.get(msgId)?.close();
             peerRefs.current.delete(msgId);
-            isUploadingRef.current = false;
           },
           onError: (error) => {
             toast.error(`Transfer failed: ${error}`);
             updateMessage({ transferState: "error", transferError: error });
             peerRefs.current.get(msgId)?.close();
             peerRefs.current.delete(msgId);
-            isUploadingRef.current = false;
           },
         },
       );
@@ -757,7 +639,6 @@ export default function ChatPage() {
     } catch (error) {
       toast.error("Failed to initiate file transfer.");
       console.error("[webrtc] sender init failed", error);
-      isUploadingRef.current = false;
     }
   };
 
@@ -807,7 +688,7 @@ export default function ChatPage() {
       toast.error("Failed to accept file transfer.");
       console.error("[webrtc] receiver init failed", error);
     }
-  };
+    };
 
   const handleDownloadFile = useCallback((msgId: string) => {
     const msg = messages.find((entry) => entry.id === msgId);
@@ -841,11 +722,8 @@ export default function ChatPage() {
     setUsers([]);
     setTypingUsers([]);
     setMessages([]);
-    isUploadingRef.current = false;
-    window.localStorage.removeItem(ACTIVE_ROOM_STORAGE_KEY);
-    window.localStorage.removeItem(USERNAME_STORAGE_KEY);
 
-    void leaveSocketRoom({ room, name: nameRef.current, sessionId: clientSessionId.current }).finally(() => {
+    void leaveSocketRoom({ room, name: nameRef.current, sessionId: "" }).finally(() => {
       disconnectSocket();
       navigate("/");
     });
@@ -868,7 +746,7 @@ export default function ChatPage() {
       toast.error("Couldn't copy the room link automatically on this device.");
       return false;
     }
-  };
+    };
 
   const getSharePayload = () => {
     const url = `${window.location.origin}/${encodeURIComponent(room)}`;
@@ -895,7 +773,7 @@ export default function ChatPage() {
     if (copied) {
       setTimeout(() => setLinkCopied(false), 2000);
     }
-  };
+    };
 
   if (!VALID.test(room)) return null;
 
@@ -938,7 +816,7 @@ export default function ChatPage() {
               </div>
             )}
             <Button type="submit" disabled={joining} className="w-full h-11 text-base font-semibold">
-              {joining ? "Joining..." : connected ? "Enter Room" : "Wake & Enter"}
+              {joining ? "Joining..." : "Enter Room"}
             </Button>
           </form>
         </div>
@@ -978,69 +856,85 @@ export default function ChatPage() {
             />
 
             {shareDialogOpen && (
-              <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 px-4" role="dialog" aria-modal="true" aria-label="Share room invite">
-                <div className="w-full max-w-sm rounded-3xl border border-white/10 bg-[#11151c]/95 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.45)] backdrop-blur-xl">
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-white/45">Share invite</div>
-                  <p className="mt-3 text-sm leading-6 text-white/88">
-                    Hey let&apos;s connect anonymously here in my ANNET room :
+              <div
+                className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center bg-black/60 px-3 pb-4 sm:px-4 sm:pb-0"
+                role="dialog"
+                aria-modal="true"
+                aria-label="Share room invite"
+                onClick={(e) => { if (e.target === e.currentTarget) setShareDialogOpen(false); }}
+              >
+                <div className="w-full max-w-[360px] rounded-3xl border border-white/10 bg-[#11151c]/98 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+                  {/* Header */}
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-white/45">Share invite</span>
+                  </div>
+
+                  {/* Invite text */}
+                  <p className="mt-2 text-sm leading-6 text-white/80">
+                    Hey let&apos;s connect anonymously here in my ANNET room:
                   </p>
-                  <p className="mt-2 break-all rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-2 text-sm text-emerald-200/90">
+
+                  {/* Room URL pill */}
+                  <p className="mt-2 break-all rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-2 text-[13px] text-emerald-300/90 font-mono">
                     {`${window.location.origin}/${encodeURIComponent(room)}`}
                   </p>
-                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
-                    <Button type="button" variant="outline" className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]" onClick={() => openShareTarget("whatsapp")}>
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#25D366] text-white">
+
+                  {/* Share buttons — 2 columns on mobile, 4 on wider screens */}
+                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                    {/* WhatsApp */}
+                    <button
+                      type="button"
+                      onClick={() => openShareTarget("whatsapp")}
+                      className="flex flex-col items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-2 py-3 text-white hover:bg-white/[0.07] active:scale-95 transition-all"
+                    >
+                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white shadow-[0_0_12px_rgba(37,211,102,0.35)]">
                         <WhatsAppIcon />
                       </span>
-                      <span className="text-left text-sm">WhatsApp</span>
-                    </Button>
-                    <Button type="button" variant="outline" className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]" onClick={() => openShareTarget("telegram")}>
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#229ED9] text-white">
+                      <span className="text-[11px] text-white/80 leading-tight">WhatsApp</span>
+                    </button>
+
+                    {/* Telegram */}
+                    <button
+                      type="button"
+                      onClick={() => openShareTarget("telegram")}
+                      className="flex flex-col items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-2 py-3 text-white hover:bg-white/[0.07] active:scale-95 transition-all"
+                    >
+                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#229ED9] text-white shadow-[0_0_12px_rgba(34,158,217,0.35)]">
                         <TelegramIcon />
                       </span>
-                      <span className="text-left text-sm">Telegram</span>
-                    </Button>
-                    <Button type="button" variant="outline" className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]" onClick={() => openShareTarget("email")}>
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white">
+                      <span className="text-[11px] text-white/80 leading-tight">Telegram</span>
+                    </button>
+
+                    {/* Email */}
+                    <button
+                      type="button"
+                      onClick={() => openShareTarget("email")}
+                      className="flex flex-col items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-2 py-3 text-white hover:bg-white/[0.07] active:scale-95 transition-all"
+                    >
+                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white">
                         <Mail className="h-5 w-5" />
                       </span>
-                      <span className="text-left text-sm">Email</span>
+                      <span className="text-[11px] text-white/80 leading-tight">Email</span>
+                    </button>
+                  </div>
+
+                  {/* Footer actions */}
+                  <div className="mt-4 flex items-center justify-between gap-3">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="text-white/60 hover:text-white hover:bg-white/[0.06]"
+                      onClick={() => setShareDialogOpen(false)}
+                    >
+                      Close
                     </Button>
                     <Button
                       type="button"
-                      variant="outline"
-                      className="flex h-auto items-center justify-start gap-2 border-white/10 bg-white/[0.03] px-3 py-3 text-white hover:bg-white/[0.06]"
-                      onClick={async () => {
-                        const { url, text } = getSharePayload();
-                        if (typeof navigator !== "undefined" && typeof navigator.share === "function") {
-                          try {
-                            setSharingInvite(true);
-                            await navigator.share({ title: "Join my ANNET room", text, url });
-                          } catch (error) {
-                            if ((error as DOMException)?.name !== "AbortError") {
-                              toast.error("This device couldn't open the system share sheet.");
-                            }
-                          } finally {
-                            setSharingInvite(false);
-                          }
-                        } else {
-                          toast.error("System share isn't available here.");
-                        }
-                      }}
+                      className="inline-flex items-center gap-2 bg-primary/90 hover:bg-primary text-white font-medium"
+                      onClick={async () => { await copyInviteLink(); }}
                     >
-                      <span className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white">
-                        <Send className="h-5 w-5" />
-                      </span>
-                      <span className="text-left text-sm">More apps</span>
-                    </Button>
-                  </div>
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <Button type="button" variant="ghost" className="text-white/70 hover:text-white" onClick={() => setShareDialogOpen(false)}>
-                      Close
-                    </Button>
-                    <Button type="button" className="inline-flex items-center gap-2 bg-primary/90 hover:bg-primary" onClick={async () => { await copyInviteLink(); }}>
                       <Copy className="h-4 w-4" />
-                      Copy link
+                      {linkCopied ? "Copied!" : "Copy link"}
                     </Button>
                   </div>
                 </div>
@@ -1086,13 +980,6 @@ export default function ChatPage() {
               <InputBar
                 onSend={handleSend}
                 onFile={handleFile}
-                onFilePickerOpen={() => {
-                  isUploadingRef.current = true;
-                  connectSocket();
-                }}
-                onFileFlowSettled={() => {
-                  isUploadingRef.current = false;
-                }}
                 replyTo={replyTo}
                 onCancelReply={() => setReplyTo(null)}
                 onTyping={() => socket.emit("typing", { name, room })}
@@ -1105,3 +992,7 @@ export default function ChatPage() {
     </div>
   );
 }
+
+
+
+

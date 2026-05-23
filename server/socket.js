@@ -1,62 +1,42 @@
-const { addUser, rebindUser, removeUser, getUser, getUserByName, getUserBySessionId, getUsersInRoom } = require("./utils/users");
+/**
+ * server/socket.js
+ * Minimal, stable Socket.IO flow for chat + media + WebRTC signaling.
+ */
 
-const DISCONNECT_GRACE_MS = 30000;
-const pendingDisconnects = new Map();
+const { addUser, removeUser, getUser, getUsersInRoom } = require("./utils/users");
 
 function setupSocket(io) {
   io.on("connection", (socket) => {
-    const clearPendingDisconnect = (id) => {
-      const timeout = pendingDisconnects.get(id);
-      if (timeout) {
-        clearTimeout(timeout);
-        pendingDisconnects.delete(id);
-      }
-    };
-
-    socket.on("join_room", ({ name, room, sessionId }) => {
-      const reconnectingUser = getUserBySessionId(room, sessionId) ?? getUserByName(room, name);
-      if (reconnectingUser && pendingDisconnects.has(reconnectingUser.id)) {
-        clearPendingDisconnect(reconnectingUser.id);
-
-        const reboundUser = rebindUser(reconnectingUser.id, socket.id);
-        socket.join(room);
-        socket.emit("join_success", {
-          room,
-          user: reboundUser,
-          users: getUsersInRoom(room),
-        });
-        io.to(room).emit("room_users", getUsersInRoom(room));
-        return;
-      }
-
-      const result = addUser(socket.id, name, room, sessionId);
-
+    socket.on("join_room", ({ name, room }) => {
+      const result = addUser(socket.id, name, room);
       if (result.error) {
         socket.emit("error", result.error);
         return;
       }
 
       socket.join(room);
+
       socket.emit("join_success", {
         room,
         user: result,
         users: getUsersInRoom(room),
       });
+
+      // Broadcast only to peers to avoid duplicate self-join system messages.
       socket.to(room).emit("user_joined", { name: result.name });
       io.to(room).emit("room_users", getUsersInRoom(room));
     });
 
-    socket.on("leave_room", ({ room, sessionId }, ack) => {
-      const user = getUser(socket.id) ?? getUserBySessionId(room, sessionId);
+    socket.on("leave_room", ({ room }, ack) => {
+      const user = getUser(socket.id);
       if (!user) {
         ack?.({ ok: true });
         return;
       }
 
-      clearPendingDisconnect(user.id);
-      const removedUser = removeUser(user.id);
+      const removedUser = removeUser(socket.id);
       if (removedUser) {
-        socket.leave(removedUser.room);
+        socket.leave(room || removedUser.room);
         io.to(removedUser.room).emit("user_left", { name: removedUser.name });
         io.to(removedUser.room).emit("room_users", getUsersInRoom(removedUser.room));
       }
@@ -70,10 +50,19 @@ function setupSocket(io) {
     });
 
     socket.on("send_media", ({ id, room, author, dataUrl, fileMeta, ts, replyTo }, ack) => {
-      socket.to(room).emit("receive_media", { id, author, dataUrl, fileMeta, ts, replyTo });
+      socket.to(room).emit("receive_media", {
+        id,
+        room,
+        author,
+        dataUrl,
+        fileMeta,
+        ts,
+        replyTo,
+      });
       ack?.({ ok: true });
     });
 
+    // Keep WebRTC signaling untouched.
     socket.on("webrtc_offer", ({ room, offer, fileMeta, msgId }) => {
       socket.to(room).emit("webrtc_offer", {
         offer,
@@ -92,12 +81,10 @@ function setupSocket(io) {
     });
 
     socket.on("ice_candidate", ({ candidate, msgId, targetSocketId }) => {
-      io.to(targetSocketId).emit("ice_candidate", {
-        candidate,
-        msgId,
-      });
+      io.to(targetSocketId).emit("ice_candidate", { candidate, msgId });
     });
 
+    // Keep typing indicators untouched.
     socket.on("typing", ({ name, room }) => {
       socket.to(room).emit("typing", { name });
     });
@@ -107,21 +94,14 @@ function setupSocket(io) {
     });
 
     socket.on("disconnect", () => {
-      const user = getUser(socket.id);
+      const user = removeUser(socket.id);
       if (!user) return;
 
-      const timeout = setTimeout(() => {
-        pendingDisconnects.delete(socket.id);
+      io.to(user.room).emit("user_left", {
+        name: user.name,
+      });
 
-        const removedUser = removeUser(socket.id);
-        if (!removedUser) return;
-
-        const { name, room } = removedUser;
-        io.to(room).emit("user_left", { name });
-        io.to(room).emit("room_users", getUsersInRoom(room));
-      }, DISCONNECT_GRACE_MS);
-
-      pendingDisconnects.set(socket.id, timeout);
+      io.to(user.room).emit("room_users", getUsersInRoom(user.room));
     });
   });
 }

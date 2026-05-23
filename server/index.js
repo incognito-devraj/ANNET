@@ -30,10 +30,14 @@ const corsOptions = {
 
 const io = new Server(server, {
   cors: corsOptions,
-  // Mobile share sheets and file pickers can pause a tab briefly without meaning the user truly left.
-  pingTimeout: 30000,
-  pingInterval: 10000,
-  maxHttpBufferSize: 50 * 1024 * 1024,
+  // pingTimeout must be long enough that a mobile file-picker / gallery
+  // interruption (which can pause the tab for 10–40 s) doesn't kill the
+  // socket before the client has a chance to reconnect silently.
+  pingTimeout: 60000,
+  pingInterval: 25000,
+  // 10 MB buffer — base64 encoding adds ~33% overhead, so a 5 MB file
+  // becomes ~6.7 MB on the wire. 10 MB gives comfortable headroom.
+  maxHttpBufferSize: 10 * 1024 * 1024,
 });
 
 app.use(cors(corsOptions));

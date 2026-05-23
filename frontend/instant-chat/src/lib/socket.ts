@@ -4,15 +4,27 @@ const DEFAULT_PRODUCTION_BACKEND_URL = "https://annet-q0ai.onrender.com";
 const SOCKET_TIMEOUT_MS = 20000;
 
 function getBackendUrl() {
+  // Explicit override always wins (set in .env files)
   const configuredUrl = import.meta.env.VITE_BACKEND_URL?.trim();
   if (configuredUrl) return configuredUrl;
 
-  const { hostname, protocol } = window.location;
-  const isLocalhost = hostname === "localhost" || hostname === "127.0.0.1";
+  const { hostname, protocol, port } = window.location;
 
-  if (!isLocalhost) return DEFAULT_PRODUCTION_BACKEND_URL;
+  // Any non-public IP or localhost → assume local dev server on :3001
+  // This covers localhost, 127.x, 10.x, 172.16-31.x, 192.168.x LAN IPs
+  const isLocal =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    /^10\./.test(hostname) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(hostname) ||
+    /^192\.168\./.test(hostname);
 
-  return `${protocol}//${hostname}:3001`;
+  if (isLocal) {
+    // Use the same host but port 3001 for the backend
+    return `${protocol}//${hostname}:3001`;
+  }
+
+  return DEFAULT_PRODUCTION_BACKEND_URL;
 }
 
 const BACKEND_URL = getBackendUrl();
