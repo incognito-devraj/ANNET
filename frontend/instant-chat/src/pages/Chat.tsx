@@ -830,11 +830,8 @@ export default function ChatPage() {
         users={users}
         currentName={name}
         open={sidebarOpen}
-        mobile
-        topOffsetClassName="top-[72px]"
         onClose={() => setSidebarOpen(false)}
       />
-      <MemberPanel users={users} currentName={name} open={sidebarOpen} topOffsetClassName="top-[72px]" />
 
       <div className="flex-1 min-w-0 overflow-hidden">
         <main className="chat-container">
