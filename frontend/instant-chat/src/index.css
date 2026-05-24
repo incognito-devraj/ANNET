@@ -191,8 +191,20 @@ All colors MUST be HSL.
   /* ── Message scroll area ────────────────────────────────────────────────── */
   .messages-scroll {
     position: relative;
-    /* Prevent any child from causing horizontal overflow */
     overflow-x: hidden;
+  }
+
+  /* Centered conversation column — keeps messages compact on wide screens */
+  .messages-inner {
+    max-width: 780px;
+    margin: 0 auto;
+    padding: 0 12px;
+  }
+
+  @media (min-width: 768px) {
+    .messages-inner {
+      padding: 0 24px;
+    }
   }
 
   /* ── Compose bar ────────────────────────────────────────────────────────── */
@@ -208,10 +220,11 @@ All colors MUST be HSL.
 
   /* ── Message bubbles ────────────────────────────────────────────────────── */
   .message {
-    /* Closer WhatsApp proportions */
     width: fit-content;
     min-width: 64px;
-    max-width: min(72%, 30rem);
+    /* On desktop: max 360px so bubbles never stretch across the column.
+       On mobile: 78% of the viewport keeps things readable on small screens. */
+    max-width: min(78%, 360px);
     border-radius: 1.15rem;
     padding: 0.56rem 0.78rem 0.42rem;
     align-self: flex-start;
@@ -338,7 +351,7 @@ All colors MUST be HSL.
 
   /* ── Mobile ─────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
-    .message { max-width: 72%; font-size: 1rem; }
+    .message { max-width: min(80%, 340px); font-size: 1rem; }
     .bg-layer { animation-duration: 30s; }
     .bg-layer, .overlay-layer, .noise-layer, .watermark-layer { position: fixed; inset: 0; }
   }

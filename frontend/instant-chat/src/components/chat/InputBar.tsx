@@ -47,6 +47,7 @@ export default function InputBar({
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
+    // Reset to 0 first so scrollHeight reflects the new content size
     textarea.style.height = "0px";
     const nextHeight = Math.min(textarea.scrollHeight, 132);
     textarea.style.height = `${Math.max(44, nextHeight)}px`;
@@ -122,7 +123,7 @@ export default function InputBar({
 
       <div className="relative bg-transparent">
         {replyTo && (
-          <div className="flex items-center gap-2 px-4 pt-2.5 pb-0 max-w-5xl mx-auto">
+          <div className="flex items-center gap-2 px-4 pt-2.5 pb-0 max-w-[780px] mx-auto">
             <div className="flex-1 pl-2.5 border-l-2 border-primary/50 text-xs text-muted-foreground/80 min-w-0 py-0.5">
               <span className="font-semibold text-primary/80 block">{replyTo.author}</span>
               <p className="truncate opacity-70 mt-0.5">{replyTo.preview}</p>
@@ -138,7 +139,7 @@ export default function InputBar({
         )}
 
         {/* Input row */}
-        <div className="flex items-center gap-2 max-w-5xl mx-auto px-3 py-2.5">
+        <div className="flex items-center gap-2 max-w-[780px] mx-auto px-3 py-2.5">
           {/* Hidden file inputs — never trigger connectSocket */}
           <input
             ref={fileRef}
@@ -163,7 +164,7 @@ export default function InputBar({
           />
 
           {/* Attachment toggle + two expanded buttons */}
-          <div className="flex items-center gap-1.5 shrink-0 self-end pb-[2px]">
+          <div className="flex items-center gap-1.5 shrink-0 self-end pb-[8px]">
             <Button
               type="button"
               variant="ghost"
@@ -222,7 +223,7 @@ export default function InputBar({
                 }, 1500);
               }}
               onKeyDown={onKey}
-              className="w-full min-h-[44px] max-h-[132px] resize-none overflow-y-hidden bg-white/[0.06] border border-white/[0.10] rounded-[22px] px-4 py-[11px] text-[15px] focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/30 focus:bg-white/[0.08] scrollbar-thin leading-[1.4] placeholder:text-muted-foreground/40 transition-[height,background-color,border-color] duration-150"
+              className="w-full min-h-[44px] max-h-[132px] resize-none overflow-y-hidden bg-white/[0.06] border border-white/[0.10] rounded-[22px] px-4 py-[11px] text-[15px] focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/30 focus:bg-white/[0.08] scrollbar-thin leading-[1.4] placeholder:text-muted-foreground/40 transition-[background-color,border-color] duration-150"
             />
             {preparingFolder && (
               <p className="px-2 pt-1 text-[11px] text-primary/75">Preparing folder zip…</p>
@@ -236,7 +237,8 @@ export default function InputBar({
             disabled={!value.trim()}
             aria-label="Send"
             className={[
-              "shrink-0 self-end pb-[2px]",
+              "shrink-0 self-end relative -top-[8px]",
+              // "shrink-0 self-end pb-[0px]",
               "flex items-center justify-center",
               "h-10 w-10 rounded-full",
               "transition-all duration-200 outline-none",
@@ -245,7 +247,7 @@ export default function InputBar({
                 : "bg-white/[0.06] text-white/20 cursor-not-allowed",
             ].join(" ")}
           >
-            <Send className="h-[17px] w-[17px] translate-x-[1px]" />
+            <Send className="h-[20px] w-[20px] translate-x-[0px] " />
           </button>
         </div>
       </div>

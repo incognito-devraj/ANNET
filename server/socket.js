@@ -62,13 +62,17 @@ function setupSocket(io) {
       ack?.({ ok: true });
     });
 
-    // Keep WebRTC signaling untouched.
-    socket.on("webrtc_offer", ({ room, offer, fileMeta, msgId }) => {
+    socket.on("webrtc_offer", ({ room, offer, fileMeta, msgId, senderName }) => {
+      // Prefer the server-side user record over the client-supplied name
+      // so the displayed author is always authoritative.
+      const user = getUser(socket.id);
+      const authorName = user?.name ?? senderName ?? "peer";
       socket.to(room).emit("webrtc_offer", {
         offer,
         fileMeta,
         msgId,
         senderSocketId: socket.id,
+        senderName: authorName,
       });
     });
 

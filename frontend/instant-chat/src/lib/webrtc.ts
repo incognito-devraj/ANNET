@@ -2,19 +2,15 @@
  * WebRTC P2P file transfer — security-first implementation.
  *
  * Security measures:
- * 1. Max file size: 50 MB hard cap
+ * 1. Max file size: 500 MB hard cap (P2P — no server buffer involved)
  * 2. MIME type allowlist — only safe types accepted
  * 3. File extension blocklist — double-checks the filename
  * 4. Receiver must explicitly click "Accept & Download" — no auto-download
  * 5. Blob URL is revoked after download to free memory
  * 6. Received byte count is validated against declared size before saving
- *
- * Signaling fixes:
- * - ICE candidates are queued until setRemoteDescription completes (race fix)
- * - answer and ice_candidate are routed directly to the target socket (not broadcast)
  */
 
-export const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50 MB
+export const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500 MB
 
 const ALLOWED_MIME_PREFIXES = [
   "image/",
@@ -53,7 +49,7 @@ export type FileSecurityResult = { ok: true } | { ok: false; reason: string };
 
 export function checkFileSecurity(name: string, size: number, mimeType: string): FileSecurityResult {
   if (size > MAX_FILE_SIZE) {
-      return { ok: false, reason: `File exceeds the 50 MB limit (${(size / 1024 / 1024).toFixed(1)} MB).` };
+    return { ok: false, reason: `File exceeds the 500 MB limit (${(size / 1024 / 1024).toFixed(1)} MB).` };
   }
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   if (BLOCKED_EXTENSIONS.has(ext)) {

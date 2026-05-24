@@ -64,24 +64,60 @@ function TelegramIcon() {
   );
 }
 
+let audioCtx;
+
+function getAudioContext() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume();
+  }
+
+  return audioCtx;
+}
+
 function playNotificationSound() {
   try {
-    const ctx = new AudioContext();
-    const osc = ctx.createOscillator();
+    const ctx = getAudioContext();
+
+    const osc1 = ctx.createOscillator();
+    const osc2 = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.connect(gain);
+
+    osc1.connect(gain);
+    osc2.connect(gain);
     gain.connect(ctx.destination);
-    osc.type = "sine";
-    osc.frequency.setValueAtTime(880, ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.15);
-    gain.gain.setValueAtTime(0.15, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
-    osc.start(ctx.currentTime);
-    osc.stop(ctx.currentTime + 0.3);
-  } catch {
-    // AudioContext can be blocked until user interaction.
+
+    osc1.type = "sine";
+    osc2.type = "triangle";
+
+    osc1.frequency.setValueAtTime(660, ctx.currentTime);
+    osc2.frequency.setValueAtTime(880, ctx.currentTime);
+
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.18, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.35);
+
+    osc1.start();
+    osc2.start();
+
+    osc1.stop(ctx.currentTime + 0.35);
+    osc2.stop(ctx.currentTime + 0.35);
+  } catch (err) {
+    console.log("Notification sound failed:", err);
   }
 }
+
+// Unlock audio on first user interaction
+document.addEventListener(
+  "click",
+  () => {
+    getAudioContext().resume();
+  },
+  { once: true }
+);
 
 export default function ChatPage() {
   const { room: roomParam } = useParams<{ room: string }>();
@@ -304,6 +340,7 @@ export default function ChatPage() {
       fileMeta: FileMeta;
       msgId: string;
       senderSocketId: string;
+      senderName?: string;
     }) => {
       const check = checkFileSecurity(payload.fileMeta.name, payload.fileMeta.size, payload.fileMeta.mimeType ?? "");
       if (!check.ok) {
@@ -315,7 +352,7 @@ export default function ChatPage() {
       setMessages((prev) => [...prev, {
         kind: "file_offer",
         id: payload.msgId,
-        author: "peer",
+        author: payload.senderName ?? "peer",
         mine: false,
         fileMeta: payload.fileMeta,
         offer: payload.offer,
@@ -635,7 +672,7 @@ export default function ChatPage() {
       );
 
       peerRefs.current.set(msgId, session);
-      socket.emit("webrtc_offer", { room, offer, fileMeta, msgId });
+      socket.emit("webrtc_offer", { room, offer, fileMeta, msgId, senderName: name });
     } catch (error) {
       toast.error("Failed to initiate file transfer.");
       console.error("[webrtc] sender init failed", error);
@@ -938,8 +975,8 @@ export default function ChatPage() {
               </div>
             )}
 
-            <div ref={scrollRef} className="messages-scroll flex-1 overflow-y-auto scrollbar-thin px-3 md:px-6 py-4 overscroll-contain">
-              <div className="max-w-5xl mx-auto">
+            <div ref={scrollRef} className="messages-scroll flex-1 overflow-y-auto scrollbar-thin py-4 overscroll-contain">
+              <div className="messages-inner">
                 <div className="mb-5 flex justify-center">
                   <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-2.5 text-[11px] text-white/90 shadow-[0_0_26px_rgba(255,255,255,0.03)] backdrop-blur-md">
                     <span className="flex items-center gap-1.5 whitespace-nowrap">

@@ -222,8 +222,9 @@ function FileCard({
   );
 }
 
-function MediaBubble({ msg, onOpenImage }: {
+function MediaBubble({ msg, ts, onOpenImage }: {
   msg: Extract<ChatMessage, { kind: "media" }>;
+  ts: string;
   onOpenImage: () => void;
 }) {
   const mime = msg.fileMeta.mimeType ?? "";
@@ -232,7 +233,7 @@ function MediaBubble({ msg, onOpenImage }: {
   const isAudio = mime.startsWith("audio/");
 
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-1">
       {isImage && (
         <div
           className="relative group/img cursor-zoom-in rounded-lg overflow-hidden"
@@ -257,40 +258,64 @@ function MediaBubble({ msg, onOpenImage }: {
           >
             <Download className="h-3.5 w-3.5" />
           </a>
+          {/* Timestamp overlaid on image — WhatsApp style */}
+          <div className="absolute bottom-0 left-0 right-0 flex items-end justify-end px-2 py-1.5 bg-gradient-to-t from-black/50 to-transparent pointer-events-none">
+            <span className="text-[11px] text-white/80 leading-none">{ts}</span>
+          </div>
         </div>
       )}
 
       {isVideo && (
-        <video
-          controls
-          preload="metadata"
-          className="w-full rounded-lg bg-black"
-          style={{ maxHeight: "280px" }}
-        >
-          <source src={msg.dataUrl} type={mime} />
-        </video>
+        <>
+          <video
+            controls
+            preload="metadata"
+            className="w-full rounded-lg bg-black"
+            style={{ maxHeight: "280px" }}
+          >
+            <source src={msg.dataUrl} type={mime} />
+          </video>
+          <div className="flex items-center justify-between px-0.5">
+            <p className="truncate text-xs text-muted-foreground/50 flex-1" title={msg.fileMeta.name}>
+              {msg.fileMeta.name} · {formatSize(msg.fileMeta.size)}
+            </p>
+            <span className="text-[11px] text-muted-foreground/50 ml-2 shrink-0">{ts}</span>
+          </div>
+        </>
       )}
 
       {isAudio && (
-        <audio controls className="w-full min-w-[240px]">
-          <source src={msg.dataUrl} type={mime} />
-        </audio>
+        <>
+          <audio controls className="w-full min-w-[240px]">
+            <source src={msg.dataUrl} type={mime} />
+          </audio>
+          <div className="flex items-center justify-between px-0.5">
+            <p className="truncate text-xs text-muted-foreground/50 flex-1" title={msg.fileMeta.name}>
+              {msg.fileMeta.name} · {formatSize(msg.fileMeta.size)}
+            </p>
+            <span className="text-[11px] text-muted-foreground/50 ml-2 shrink-0">{ts}</span>
+          </div>
+        </>
       )}
 
       {!isImage && !isVideo && !isAudio && (
-        <a
-          href={msg.dataUrl}
-          download={msg.fileMeta.name}
-          className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm hover:bg-black/30 transition-colors"
-        >
-          <FileTypeIcon mimeType={mime} name={msg.fileMeta.name} />
-          <span className="truncate">{msg.fileMeta.name}</span>
-        </a>
+        <>
+          <a
+            href={msg.dataUrl}
+            download={msg.fileMeta.name}
+            className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm hover:bg-black/30 transition-colors"
+          >
+            <FileTypeIcon mimeType={mime} name={msg.fileMeta.name} />
+            <span className="truncate">{msg.fileMeta.name}</span>
+          </a>
+          <div className="flex items-center justify-between px-0.5">
+            <p className="truncate text-xs text-muted-foreground/50 flex-1">
+              {formatSize(msg.fileMeta.size)}
+            </p>
+            <span className="text-[11px] text-muted-foreground/50 ml-2 shrink-0">{ts}</span>
+          </div>
+        </>
       )}
-
-      <p className="truncate text-xs text-muted-foreground/50" title={msg.fileMeta.name}>
-        {msg.fileMeta.name} · {formatSize(msg.fileMeta.size)}
-      </p>
     </div>
   );
 }
@@ -481,6 +506,7 @@ export default function MessageBubble({
             className={`message ${mine ? "sent" : "received"} ${bubbleRadius} min-w-0 relative z-10 transition-transform duration-75 touch-pan-y`}
             style={{
               minWidth: msg.kind === "file_offer" ? "220px" : undefined,
+              position: "relative",
               ...translatedStyle,
             }}
           >
@@ -492,17 +518,34 @@ export default function MessageBubble({
 
             {msg.kind === "message" && (
               <div className="message-copy">
+                {/* WhatsApp-style: text + timestamp on same flow.
+                    The timestamp is a right-floated spacer so the text
+                    wraps naturally and the time sits at the bottom-right. */}
                 <p className="message-body" style={messageTextStyle}>
                   {msg.message}
+                  {/* Invisible spacer that reserves room for the timestamp */}
+                  <span className="inline-block w-[52px] h-[1em] align-bottom" aria-hidden="true" />
                 </p>
-                <span className="message-time">
+                <span
+                  className="message-time"
+                  style={{
+                    position: "absolute",
+                    bottom: "6px",
+                    right: "10px",
+                    fontSize: "11px",
+                    lineHeight: 1,
+                    opacity: 0.55,
+                    pointerEvents: "none",
+                    whiteSpace: "nowrap",
+                  }}
+                >
                   {timestampText}
                 </span>
               </div>
             )}
 
             {msg.kind === "media" && (
-              <MediaBubble msg={msg} onOpenImage={() => setLightboxOpen(true)} />
+              <MediaBubble msg={msg} ts={timestampText} onOpenImage={() => setLightboxOpen(true)} />
             )}
 
             {msg.kind === "file_offer" && (
@@ -511,7 +554,8 @@ export default function MessageBubble({
           </div>
         </div>
 
-        {msg.kind !== "message" && (
+        {/* Timestamp below for file_offer; media has it inline, message has it absolute */}
+        {msg.kind === "file_offer" && (
           <span className="text-[10px] text-muted-foreground/40 px-2 mt-1">
             {timestampText}
           </span>

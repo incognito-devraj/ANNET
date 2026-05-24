@@ -149,7 +149,7 @@ export function ChatTopBar({
             <AnnetBrandingButton open={sidebarOpen} onClick={onToggleMembers} />
           </div>
 
-          <div className="mx-3 my-3 w-px self-stretch bg-white/10" />
+          <div className="mx-0 my-3 w-px self-stretch bg-white/10" />
 
           <button
             type="button"
@@ -171,7 +171,7 @@ export function ChatTopBar({
             </div>
           </button>
 
-          <div className="mr-4 flex shrink-0 items-center gap-0">
+          <div className="mr-4 flex shrink-0 items-center gap-0 pt-2">
             <ActionButton
               label=""
               ariaLabel="Share room invite"
@@ -230,7 +230,7 @@ export function ChatTopBar({
             </button>
           </div>
 
-          <div className="flex shrink-0 items-centre gap-0 pt-1.5">
+          <div className="flex shrink-0 items-centre gap-0 pt-3.5">
             <ActionButton
               label=""
               ariaLabel="Share room invite"
