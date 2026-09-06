@@ -149,6 +149,9 @@ export default function ChatPage() {
   const tapResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activePointerIdsRef = useRef<Set<number>>(new Set());
   const multiPointerRef = useRef(false);
+  const movedPointerIdsRef = useRef<Set<number>>(new Set());
+  const pointerStartRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const eligiblePointerIdsRef = useRef<Set<number>>(new Set());
   const cameraHistoryRef = useRef(false);
   const dragDepthRef = useRef(0);
 
@@ -196,6 +199,9 @@ export default function ChatPage() {
       joinedRef.current = false;
       if (tapResetTimer.current) clearTimeout(tapResetTimer.current);
       activePointerIds.clear();
+      movedPointerIdsRef.current.clear();
+      pointerStartRef.current.clear();
+      eligiblePointerIdsRef.current.clear();
       multiPointerRef.current = false;
     };
   }, []);
@@ -768,36 +774,28 @@ export default function ChatPage() {
   const handleScreenTap = (event: ReactPointerEvent<HTMLDivElement>) => {
     // The camera overlay owns all of its own pointer events.
     if (cameraOpen) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
 
     activePointerIdsRef.current.add(event.pointerId);
+    pointerStartRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
-    // Only the primary touch can count toward the three-tap shortcut.
-    // A second finger cancels the sequence, so 3-finger gestures never open it.
+    // Any concurrent pointer cancels the sequence. We still track it until all
+    // pointers finish so a multi-finger swipe cannot resume the old sequence.
     if (event.pointerType === "touch" && !event.isPrimary) {
       multiPointerRef.current = true;
-      clickCountRef.current = 0;
-      lastClickRef.current = 0;
-      if (tapResetTimer.current) {
-        clearTimeout(tapResetTimer.current);
-        tapResetTimer.current = null;
-      }
-      return;
     }
-
-    // A multi-finger gesture must never be interpreted as several taps.
-    // Cancel the current sequence as soon as a second pointer is present.
     if (activePointerIdsRef.current.size > 1) {
       multiPointerRef.current = true;
+    }
+
+    if (multiPointerRef.current) {
       clickCountRef.current = 0;
       lastClickRef.current = 0;
       if (tapResetTimer.current) {
         clearTimeout(tapResetTimer.current);
         tapResetTimer.current = null;
       }
-      return;
     }
-
-    if (multiPointerRef.current) return;
 
     const target = event.target as HTMLElement;
 
@@ -805,37 +803,64 @@ export default function ChatPage() {
     if (event.button !== 0 && event.pointerType === "mouse") return;
 
     // Ignore interactive elements and the composer
-    if (target.closest("button, input, textarea, a, [role=dialog], [role=button], select, label")) return;
-    if (target.closest(".chat-compose")) return;
+    if (!target.closest("button, input, textarea, a, [role=dialog], [role=button], select, label") && !target.closest(".chat-compose")) {
+      eligiblePointerIdsRef.current.add(event.pointerId);
+    }
+  };
 
-    const now = Date.now();
-    // Reset counter if gap between taps is too large (500ms)
-    if (now - lastClickRef.current > 500) clickCountRef.current = 0;
-    clickCountRef.current += 1;
-    lastClickRef.current = now;
+  const handleScreenPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = pointerStartRef.current.get(event.pointerId);
+    if (!start) return;
 
-    // Auto-reset after 500ms of inactivity so a partial sequence
-    // (e.g. 2 taps then a long pause) never carries over to the next tap
-    if (tapResetTimer.current) clearTimeout(tapResetTimer.current);
-    tapResetTimer.current = setTimeout(() => { clickCountRef.current = 0; }, 500);
-
-    if (clickCountRef.current >= 3) {
+    // A swipe/drag is never a tap. A small threshold avoids cancelling from
+    // normal touch jitter while rejecting finger swipes reliably.
+    if (Math.hypot(event.clientX - start.x, event.clientY - start.y) > 24) {
+      movedPointerIdsRef.current.add(event.pointerId);
       clickCountRef.current = 0;
-      if (tapResetTimer.current) { clearTimeout(tapResetTimer.current); tapResetTimer.current = null; }
-
-      // Prevent browser's native triple-click text selection
-      event.preventDefault();
-      // Also clear any selection that snuck through on the 3rd click
-      window.getSelection()?.removeAllRanges();
-
-      openCamera();
+      lastClickRef.current = 0;
+      if (tapResetTimer.current) {
+        clearTimeout(tapResetTimer.current);
+        tapResetTimer.current = null;
+      }
     }
   };
 
   const handleScreenPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const wasSingleCleanTap =
+      activePointerIdsRef.current.size === 1 &&
+      !multiPointerRef.current &&
+      !movedPointerIdsRef.current.has(event.pointerId) &&
+      eligiblePointerIdsRef.current.has(event.pointerId);
+
     activePointerIdsRef.current.delete(event.pointerId);
+    movedPointerIdsRef.current.delete(event.pointerId);
+    pointerStartRef.current.delete(event.pointerId);
+    eligiblePointerIdsRef.current.delete(event.pointerId);
+
+    if (wasSingleCleanTap) {
+      const now = Date.now();
+      if (now - lastClickRef.current > 500) clickCountRef.current = 0;
+      clickCountRef.current += 1;
+      lastClickRef.current = now;
+
+      if (tapResetTimer.current) clearTimeout(tapResetTimer.current);
+      tapResetTimer.current = setTimeout(() => { clickCountRef.current = 0; }, 500);
+
+      if (clickCountRef.current >= 3) {
+        clickCountRef.current = 0;
+        clearTimeout(tapResetTimer.current);
+        tapResetTimer.current = null;
+        event.preventDefault();
+        window.getSelection()?.removeAllRanges();
+        openCamera();
+      }
+    }
+
     if (activePointerIdsRef.current.size === 0) {
       multiPointerRef.current = false;
+      movedPointerIdsRef.current.clear();
+      pointerStartRef.current.clear();
+      eligiblePointerIdsRef.current.clear();
     }
   };
 
@@ -1055,6 +1080,7 @@ export default function ChatPage() {
     <div
       className="relative flex h-[100svh] md:h-[100dvh] overflow-hidden bg-black"
       onPointerDownCapture={handleScreenTap}
+      onPointerMoveCapture={handleScreenPointerMove}
       onPointerUpCapture={handleScreenPointerEnd}
       onPointerCancelCapture={handleScreenPointerEnd}
       onDragEnter={handleDragEnter}
@@ -1092,7 +1118,7 @@ export default function ChatPage() {
         >
           <div className="flex flex-col items-center gap-3 text-center px-8">
             <span className="text-4xl select-none">🚫</span>
-            <p className="text-white/90 font-semibold text-lg tracking-tight">Screen capture detected</p>
+            <p className="text-white/90 font-semibold text-lg tracking-tight">Screenshot shortcut detected</p>
             <p className="text-white/45 text-sm">Browser apps cannot block phone screenshots or recordings.</p>
           </div>
         </div>
@@ -1234,7 +1260,7 @@ export default function ChatPage() {
                     <span className="h-3 w-px bg-white/12" />
                     <span className="flex items-center gap-1.5 whitespace-nowrap text-white/82">
                       <Camera className="h-3.5 w-3.5 text-primary/90" />
-                      <span>3 taps: snap photo</span>
+                      <span>3 taps to snap</span>
                     </span>
                   </div>
                 </div>
