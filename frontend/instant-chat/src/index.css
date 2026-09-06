@@ -18,9 +18,9 @@ All colors MUST be HSL.
     --popover: 230 20% 8%;
     --popover-foreground: 210 30% 96%;
 
-    --primary: 160 84% 50%;
-    --primary-foreground: 230 20% 6%;
-    --primary-glow: 160 90% 60%;
+    --primary: 175 70% 48%;
+    --primary-foreground: 220 25% 8%;
+    --primary-glow: 175 80% 58%;
 
     --secondary: 230 15% 14%;
     --secondary-foreground: 210 30% 96%;
@@ -38,8 +38,8 @@ All colors MUST be HSL.
     --input: 230 15% 14%;
     --ring: 160 84% 50%;
 
-    --bubble-own: 160 70% 22%;
-    --bubble-other: 230 15% 14%;
+    --bubble-own: 195 30% 14%;
+    --bubble-other: 215 22% 12%;
     --system: 220 10% 50%;
 
     --gradient-bg: radial-gradient(ellipse at top, hsl(160 60% 10% / 0.6), transparent 60%), radial-gradient(ellipse at bottom right, hsl(200 60% 10% / 0.4), transparent 60%);
@@ -120,6 +120,26 @@ All colors MUST be HSL.
 }
 
 @layer utilities {
+  /* ── Screenshot prevention ──────────────────────────────────────────────── */
+  /* Hide all chat content when printing (Ctrl+P / Print Screen on some OS) */
+  @media print {
+    .chat-container,
+    .chat-content,
+    .messages-scroll,
+    .messages-inner,
+    .chat-compose {
+      display: none !important;
+      visibility: hidden !important;
+    }
+    body::after {
+      content: "Screenshots and printing are not allowed in Annet.";
+      display: block;
+      padding: 2rem;
+      font-size: 1.2rem;
+      color: #333;
+    }
+  }
+
   /* ── Chat container ─────────────────────────────────────────────────────── */
   .chat-container {
     position: relative;
@@ -142,10 +162,10 @@ All colors MUST be HSL.
   .bg-layer {
     z-index: 0;
     background:
-      radial-gradient(ellipse 100% 55% at 50% -5%,  hsl(158 100% 48% / 0.12), transparent 55%),
-      radial-gradient(ellipse 60%  50% at -5% 100%, hsl(240  70% 45% / 0.10), transparent 55%),
-      radial-gradient(ellipse 50%  40% at 100% 95%, hsl(195  80% 50% / 0.08), transparent 50%),
-      hsl(224 30% 4%);
+      radial-gradient(ellipse 100% 55% at 50% -5%,  hsl(175 80% 45% / 0.10), transparent 55%),
+      radial-gradient(ellipse 60%  50% at -5% 100%, hsl(240  70% 45% / 0.09), transparent 55%),
+      radial-gradient(ellipse 50%  40% at 100% 95%, hsl(195  80% 50% / 0.07), transparent 50%),
+      hsl(216 22% 5%);
     transform: scale(1.06);
     animation: bgFloat 26s ease-in-out infinite alternate;
     will-change: transform;
@@ -166,10 +186,10 @@ All colors MUST be HSL.
   .overlay-layer {
     z-index: 2;
     background:
-      radial-gradient(ellipse 70% 20% at 50% 0%, hsl(158 100% 50% / 0.04), transparent 100%),
-      linear-gradient(to top,  hsl(224 30% 3% / 0.60) 0%, transparent 35%),
-      linear-gradient(to right, hsl(224 30% 3% / 0.25) 0%, transparent 15%),
-      linear-gradient(to left,  hsl(224 30% 3% / 0.25) 0%, transparent 15%);
+      radial-gradient(ellipse 70% 20% at 50% 0%, hsl(175 80% 50% / 0.04), transparent 100%),
+      linear-gradient(to top,  hsl(216 22% 4% / 0.60) 0%, transparent 35%),
+      linear-gradient(to right, hsl(216 22% 4% / 0.25) 0%, transparent 15%),
+      linear-gradient(to left,  hsl(216 22% 4% / 0.25) 0%, transparent 15%);
   }
 
   /* watermark-layer kept for DOM compatibility but hidden */
@@ -192,6 +212,10 @@ All colors MUST be HSL.
   .messages-scroll {
     position: relative;
     overflow-x: hidden;
+    /* Prevent triple-click from selecting message text —
+       the triple-tap gesture opens the camera instead */
+    user-select: none;
+    -webkit-user-select: none;
   }
 
   /* Centered conversation column — keeps messages compact on wide screens */
@@ -211,93 +235,162 @@ All colors MUST be HSL.
   .chat-compose {
     position: relative;
     z-index: 4;
-    background: hsl(224 28% 7% / 0.82);
-    backdrop-filter: blur(20px) saturate(1.4);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
-    border-top: 1px solid hsl(158 60% 50% / 0.10);
-    box-shadow: 0 -1px 0 hsl(0 0% 0% / 0.25), 0 -8px 32px hsl(224 30% 3% / 0.35);
+    background: hsl(224 28% 6% / 0.94);
+    border-top: 1px solid hsl(175 60% 48% / 0.08);
+    box-shadow: 0 -8px 24px hsl(224 30% 3% / 0.22);
   }
 
   /* ── Message bubbles ────────────────────────────────────────────────────── */
+  /*
+   * LAYOUT: float-right timestamp + BFC container + ::after spacer
+   *
+   * How it works:
+   *  1. .message-time is float:right, declared FIRST in DOM.
+   *     The browser pulls it to the top-right corner of .message-copy.
+   *  2. .message-body text flows in the remaining space — so for a short
+   *     single-line message, text and timestamp share one visual line.
+   *  3. .message-body::after is an invisible inline-block exactly as wide
+   *     as the timestamp area. It sits after the last character, reserving
+   *     space on the last line so the text never collides with the float.
+   *  4. .message-copy has overflow:hidden which creates a Block Formatting
+   *     Context, cleanly containing the float without extra clearfix markup.
+   *
+   * Result for every case:
+   *   "Hi"         → [ Hi          09:15 PM ]  — one compact line
+   *   "Hello there"→ [ Hello there 09:15 PM ]  — one line, fits naturally
+   *   Long message → wraps, timestamp trails the final line on the right
+   *
+   * No min-width. No fixed width. No padding-bottom hacks. No absolute pos.
+   */
+
   .message {
-    width: fit-content;
-    min-width: 64px;
-    /* On desktop: max 360px so bubbles never stretch across the column.
-       On mobile: 78% of the viewport keeps things readable on small screens. */
-    max-width: min(78%, 360px);
-    border-radius: 1.15rem;
-    padding: 0.56rem 0.78rem 0.42rem;
+    display: inline-block;
+    width: auto;
+    min-width: 0;
+    max-width: min(72%, 540px);
+    border-radius: 11px;
+    padding: 6px 10px 6px;
     align-self: flex-start;
     font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-    font-size: 1rem;
-    line-height: 1.34;
+    font-size: 14px;
+    line-height: 1.45;
     word-break: break-word;
     overflow-wrap: break-word;
-    border: 1px solid hsl(0 0% 100% / 0.06);
-    box-shadow:
-      0 1px 3px  hsl(0 0% 0% / 0.26),
-      0 3px 12px hsl(0 0% 0% / 0.12),
-      inset 0 1px 0 hsl(0 0% 100% / 0.06);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    transition: box-shadow 0.15s ease, transform 0.15s ease;
+    border: 1px solid transparent;
+    box-shadow: 0 1px 3px hsl(220 30% 2% / 0.4);
+    box-sizing: border-box;
+    transition: filter 0.12s ease, transform 0.12s ease;
+    position: relative;
   }
 
+  /* ── Sent bubble — dark teal-graphite ───────────────────────────────────── */
   .message.sent {
-    background: linear-gradient(180deg, hsl(156 64% 23% / 0.96), hsl(156 60% 20% / 0.98));
-    border-color: hsl(158 80% 50% / 0.18);
+    background: #182A2F;
+    border-color: rgba(110, 231, 216, 0.10);
     box-shadow:
-      0 1px 3px  hsl(0 0% 0% / 0.32),
-      0 4px 14px hsl(0 0% 0% / 0.18),
-      inset 0 1px 0 hsl(158 100% 80% / 0.08);
+      0 1px 3px hsl(220 30% 2% / 0.45),
+      inset 0 1px 0 rgba(110, 231, 216, 0.06);
   }
+  .message.sent:hover { filter: brightness(1.06); }
 
-  .message.sent:hover {
-    box-shadow:
-      0 1px 3px  hsl(0 0% 0% / 0.34),
-      0 5px 16px hsl(0 0% 0% / 0.2),
-      0 0 12px hsl(158 80% 50% / 0.08),
-      inset 0 1px 0 hsl(158 100% 80% / 0.10);
-  }
-
+  /* ── Received bubble — dark graphite/blue-gray ──────────────────────────── */
   .message.received {
-    background: hsl(225 18% 13% / 0.94);
-    border-color: hsl(0 0% 100% / 0.07);
+    background: #151C24;
+    border-color: rgba(255, 255, 255, 0.055);
+    box-shadow:
+      0 1px 3px hsl(220 30% 2% / 0.45),
+      inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  }
+  .message.received:hover { filter: brightness(1.07); }
+
+  /* ── Tail — subtle corner nub ───────────────────────────────────────────── */
+  .message.sent.has-tail    { border-bottom-right-radius: 3px; }
+  .message.received.has-tail { border-bottom-left-radius: 3px; }
+
+  .message.sent.has-tail::before {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    right: -6px;
+    width: 8px;
+    height: 14px;
+    background: #182A2F;
+    clip-path: polygon(0 0, 0 100%, 100% 100%);
   }
 
+  .message.received.has-tail::before {
+    content: "";
+    position: absolute;
+    bottom: 0;
+    left: -6px;
+    width: 8px;
+    height: 14px;
+    background: #151C24;
+    clip-path: polygon(100% 0, 0 100%, 100% 100%);
+  }
+
+  /* ── Author name inside bubble ─────────────────────────────────────────── */
+  .message-author {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    margin-bottom: 2px;
+    color: #6EE7D8;
+    line-height: 1.2;
+    opacity: 0.9;
+  }
+
+  /* ── Message copy: just the text, no timestamp logic ───────────────────── */
   .message-copy {
-    display: inline;
+    /* Plain block — no float tricks, no padding hacks */
   }
 
+  /* ── Message text ──────────────────────────────────────────────────────── */
   .message-body {
-    display: inline;
+    display: block;
     margin: 0;
     white-space: pre-wrap;
     overflow-wrap: break-word;
     word-break: break-word;
-    padding-right: 0.35rem;
+    color: #E7EDF3;
+    font-size: inherit;
+    line-height: inherit;
   }
 
+  /* ── Timestamp — sits OUTSIDE the bubble, below it ─────────────────────── */
+  /*
+   * Rendered as a sibling element after .message in the flex column,
+   * not inside it. Aligned to the bubble's side (right for sent, left for received).
+   * Intentionally low-visibility — like the code block timestamp.
+   */
   .message-time {
-    display: inline-block;
-    margin-left: 0.5rem;
-    vertical-align: bottom;
+    display: block;
     white-space: nowrap;
-    font-size: 0.72rem;
+    font-size: 10px;
+    font-weight: 400;
     line-height: 1;
-    color: hsl(0 0% 100% / 0.48);
+    color: rgba(139, 152, 167, 0.45);
+    pointer-events: none;
+    user-select: none;
+    margin-top: 2px;
+    /* horizontal padding matches the bubble's own side padding */
+    padding: 0 2px;
   }
 
-  .message.received:hover {
-    box-shadow:
-      0 1px 4px  hsl(0 0% 0% / 0.28),
-      0 6px 22px hsl(0 0% 0% / 0.16),
-      inset 0 1px 0 hsl(0 0% 100% / 0.08);
+  .camera-snap-ui { color: hsl(215 100% 88%); }
+  .camera-snap-hint, .camera-shutter {
+    background: hsl(220 45% 8% / 0.72);
+    border: 1px solid hsl(195 100% 65% / 0.45);
+    box-shadow: 0 0 24px hsl(205 100% 55% / 0.18);
+    backdrop-filter: blur(14px);
   }
+
+  .camera-shutter { color: hsl(195 100% 75%); }
 
   /* ── Reply scroll-to highlight flash ────────────────────────────────────── */
   @keyframes msgHighlight {
-    0%   { box-shadow: 0 0 0 2px hsl(158 100% 50% / 0.6), 0 0 20px hsl(158 100% 50% / 0.3); }
+    0%   { box-shadow: 0 0 0 2px rgba(110, 231, 216, 0.5), 0 0 16px rgba(110, 231, 216, 0.2); }
     100% { box-shadow: none; }
   }
 
@@ -351,7 +444,14 @@ All colors MUST be HSL.
 
   /* ── Mobile ─────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
-    .message { max-width: min(80%, 340px); font-size: 1rem; }
+    .message {
+      max-width: min(86%, 420px);
+      min-width: 0;
+      font-size: 14px;
+      border-radius: 10px;
+      padding: 6px 9px 5px;
+    }
+    .message-copy { min-width: 0; }
     .bg-layer { animation-duration: 30s; }
     .bg-layer, .overlay-layer, .noise-layer, .watermark-layer { position: fixed; inset: 0; }
   }

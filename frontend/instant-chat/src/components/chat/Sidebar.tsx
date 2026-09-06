@@ -253,8 +253,7 @@ export function ChatTopBar({
 
 // ─── MemberPanel ─────────────────────────────────────────────────────────────
 // Floating rounded card anchored to the top-left, below the topbar.
-// Clicking the backdrop (anywhere outside) dismisses it.
-// Matches the ANNET dark theme with mask-style avatars and emerald accents.
+// Mobile: backdrop click closes it. Desktop: no backdrop — chat stays interactive.
 
 export function MemberPanel({
   users,
@@ -266,10 +265,11 @@ export function MemberPanel({
     <AnimatePresence>
       {open && (
         <>
-          {/* Full-screen invisible backdrop — click anywhere to close */}
+          {/* Backdrop — mobile only. On desktop it's hidden so the chat area
+              remains fully interactive while the sidebar is open. */}
           <motion.div
             key="backdrop"
-            className="fixed inset-0 z-40"
+            className="fixed inset-0 z-40 lg:hidden"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -278,7 +278,7 @@ export function MemberPanel({
             aria-hidden="true"
           />
 
-          {/* Floating panel card */}
+          {/* Floating panel — same fixed position on all screen sizes */}
           <motion.aside
             key="panel"
             role="dialog"
@@ -287,15 +287,11 @@ export function MemberPanel({
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.94, y: -8 }}
             transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
-            // Anchored below topbar, left-aligned, stretches to bottom of screen
-            // Width matches the logo's right edge (~160px logo + 12px left padding)
-            // className="fixed bottom-[78px] left-2 top-[76px] z-50 flex w-[168px] flex-col overflow-hidden rounded-[22px] border border-white/[0.09] shadow-[0_24px_60px_rgba(0,0,0,0.7),0_0_0_1px_rgba(255,255,255,0.04)]"
-            className="fixed bottom-[78px] left-2 top-[76px] z-50 flex w-[170px] md:w-[280px] lg:w-[260px] flex-col overflow-hidden rounded-[22px] border border-white/[0.09] shadow-[0_24px_60px_rgba(0,0,0,0.7),0_0_0_1px_rgba(255,255,255,0.04)]"
+            className="fixed bottom-[78px] left-2 top-[76px] z-50 flex w-[170px] md:w-[210px] lg:w-[260px] flex-col overflow-hidden rounded-[22px] border border-white/[0.09] shadow-[0_24px_60px_rgba(0,0,0,0.7),0_0_0_1px_rgba(255,255,255,0.04)]"
             style={{
               background: "linear-gradient(160deg, #0d1117 0%, #0a0e14 60%, #080c11 100%)",
               willChange: "transform, opacity",
             }}
-            // Stop clicks inside the panel from hitting the backdrop
             onClick={(e) => e.stopPropagation()}
           >
             {/* Top glow line */}

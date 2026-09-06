@@ -436,20 +436,14 @@ export default function MessageBubble({
   const translatedStyle = swipeOffset > 0
     ? { transform: `translateX(${swipeOffset * replyDirection}px)` }
     : undefined;
-  const messageTextStyle = {
-    fontSize: `${textSize}px`,
-    whiteSpace: "pre-wrap" as const,
-    overflowWrap: "break-word" as const,
-    wordBreak: "break-word" as const,
-  };
   const replyPreviewStyle = {
     fontSize: `${Math.max(11, textSize - 3)}px`,
   };
   const timestampText = formatTime(msg.ts);
-  const bubbleRadius = mine
-    ? groupedWithNext ? "rounded-br-lg" : "rounded-br-md"
-    : groupedWithNext ? "rounded-bl-lg" : "rounded-bl-md";
-  const bubbleSpacing = groupedWithPrev ? "mt-0.5" : "mt-3";
+  // Show tail only on the last bubble in a group (not grouped with next)
+  const hasTail = !groupedWithNext;
+  const bubbleSpacing = groupedWithPrev ? "mt-[3px]" : "mt-3";
+  // Author name shown inside bubble for received messages, only on first of group
   const authorVisible = !mine && !groupedWithPrev;
 
   if (msg.kind === "code") {
@@ -486,13 +480,7 @@ export default function MessageBubble({
       )}
 
       <div id={`msg-${msg.id}`} className={`flex flex-col ${align} ${bubbleSpacing} w-full min-w-0 max-w-full`}>
-        {authorVisible && (
-          <span className="text-xs font-semibold text-primary/70 px-2 mb-1">
-            {msg.author}
-          </span>
-        )}
-
-        <div className={`relative flex items-end gap-1.5 min-w-0 max-w-full ${mine ? "flex-row-reverse" : "flex-row"}`} {...swipeHandlers}>
+        <div className={`relative flex w-full items-end gap-1.5 min-w-0 ${mine ? "flex-row-reverse justify-start" : "flex-row justify-start"}`} {...swipeHandlers}>
           {swipeEnabled && <ReplyAccessibilityButton id={msg.id} onReply={onReply} />}
           {swipeEnabled && (
             <div className={`absolute top-1/2 -translate-y-1/2 z-0 ${mine ? "left-2" : "right-2"} transition-all ${swipeOffset > 8 ? "opacity-100 scale-100" : "opacity-0 scale-90"}`}>
@@ -503,13 +491,17 @@ export default function MessageBubble({
           )}
 
           <div
-            className={`message ${mine ? "sent" : "received"} ${bubbleRadius} min-w-0 relative z-10 transition-transform duration-75 touch-pan-y`}
+            className={`message ${mine ? "sent" : "received"} ${hasTail ? "has-tail" : ""} min-w-0 relative z-10 transition-transform duration-75 touch-pan-y`}
             style={{
               minWidth: msg.kind === "file_offer" ? "220px" : undefined,
-              position: "relative",
               ...translatedStyle,
             }}
           >
+            {/* Author name inside bubble — received messages, first of group */}
+            {authorVisible && (
+              <span className="message-author">{msg.author}</span>
+            )}
+
             {(msg.kind === "message" || msg.kind === "media") && (
               <div style={replyPreviewStyle}>
                 <SharedReplyPreview msg={msg} />
@@ -518,29 +510,9 @@ export default function MessageBubble({
 
             {msg.kind === "message" && (
               <div className="message-copy">
-                {/* WhatsApp-style: text + timestamp on same flow.
-                    The timestamp is a right-floated spacer so the text
-                    wraps naturally and the time sits at the bottom-right. */}
-                <p className="message-body" style={messageTextStyle}>
+                <p className="message-body" style={{ fontSize: `${textSize}px` }}>
                   {msg.message}
-                  {/* Invisible spacer that reserves room for the timestamp */}
-                  <span className="inline-block w-[52px] h-[1em] align-bottom" aria-hidden="true" />
                 </p>
-                <span
-                  className="message-time"
-                  style={{
-                    position: "absolute",
-                    bottom: "6px",
-                    right: "10px",
-                    fontSize: "11px",
-                    lineHeight: 1,
-                    opacity: 0.55,
-                    pointerEvents: "none",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {timestampText}
-                </span>
               </div>
             )}
 
@@ -554,12 +526,11 @@ export default function MessageBubble({
           </div>
         </div>
 
-        {/* Timestamp below for file_offer; media has it inline, message has it absolute */}
-        {msg.kind === "file_offer" && (
-          <span className="text-[10px] text-muted-foreground/40 px-2 mt-1">
-            {timestampText}
-          </span>
-        )}
+        {/* Timestamp sits outside & below the bubble in the flex-col parent.
+            Aligned to match the bubble's side. Low-visibility, like code block. */}
+        <span className={`message-time ${mine ? "self-end" : "self-start"}`}>
+          {timestampText}
+        </span>
       </div>
     </>
   );

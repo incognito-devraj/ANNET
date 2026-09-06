@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback, FormEvent } from "react";
+import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Code2, Copy, FolderUp, Mail, VenetianMask } from "lucide-react";
+import { Camera, Code2, Copy, FolderUp, Mail, Paperclip, VenetianMask } from "lucide-react";
 import { socket, connectSocket, disconnectSocket, leaveSocketRoom } from "@/lib/socket";
 import {
   checkFileSecurity,
@@ -13,8 +14,9 @@ import {
 } from "@/lib/webrtc";
 import { ChatTopBar, MemberPanel } from "@/components/chat/Sidebar";
 import MessageBubble from "@/components/chat/MessageBubble";
-import InputBar from "@/components/chat/InputBar";
+import InputBar, { type InputBarHandle } from "@/components/chat/InputBar";
 import TypingIndicator from "@/components/chat/TypingIndicator";
+import CameraCapture from "@/components/chat/CameraCapture";
 import { ChatMessage, ChatUser, FileMeta, ReplyTo } from "@/types/chat";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +26,6 @@ const JOIN_TIMEOUT_MS = 25000;
 const EMIT_ACK_TIMEOUT_MS = 15000;
 // Small media threshold: ≤ 5 MB → socket (fire-and-forget), > 5 MB → WebRTC P2P
 const MAX_SOCKET_MEDIA_SIZE = 5 * 1024 * 1024;
-
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -68,7 +69,8 @@ let audioCtx;
 
 function getAudioContext() {
   if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    audioCtx = new AudioCtx();
   }
 
   if (audioCtx.state === "suspended") {
@@ -140,9 +142,19 @@ export default function ChatPage() {
   const [unread, setUnread] = useState(0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [messageFontSize, setMessageFontSize] = useState(15);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [draggingFiles, setDraggingFiles] = useState(false);
+  const lastClickRef = useRef(0);
+  const clickCountRef = useRef(0);
+  const tapResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const activePointerIdsRef = useRef<Set<number>>(new Set());
+  const multiPointerRef = useRef(false);
+  const dragDepthRef = useRef(0);
 
   const tabFocused = useRef(true);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputBarRef = useRef<InputBarHandle>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const hasJoinedRoom = useRef(false);
   const joinedRef = useRef(false);
   const nameRef = useRef(name);
@@ -174,12 +186,16 @@ export default function ChatPage() {
   }, []);
 
   useEffect(() => {
+    const activePointerIds = activePointerIdsRef.current;
     return () => {
       peerRefs.current.forEach((session) => session.close());
       peerRefs.current.clear();
       socketIdMap.current.clear();
       hasJoinedRoom.current = false;
       joinedRef.current = false;
+      if (tapResetTimer.current) clearTimeout(tapResetTimer.current);
+      activePointerIds.clear();
+      multiPointerRef.current = false;
     };
   }, []);
 
@@ -496,6 +512,39 @@ export default function ChatPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
+  // ── Screenshot deterrence ────────────────────────────────────────────────
+  // Browsers cannot truly block screenshots, but we can:
+  //   1. Detect PrintScreen key → clear clipboard + show warning
+  //   2. Hide content via @media print CSS (already in index.css)
+  const [screenshotWarning, setScreenshotWarning] = useState(false);
+
+  useEffect(() => {
+    if (!joined) return;
+
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === "PrintScreen" || e.code === "PrintScreen") {
+        setScreenshotWarning(true);
+        setTimeout(() => setScreenshotWarning(false), 2500);
+        toast.info("Annet cannot block OS screenshots or screen recording.", { duration: 3000 });
+      }
+    };
+
+    // Also intercept Ctrl+Shift+S / Ctrl+P (Save/Print shortcuts)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "p" || e.key === "P")) {
+        e.preventDefault();
+        toast.error("Printing is not allowed in Annet.", { duration: 2500 });
+      }
+    };
+
+    window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("keydown", onKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("keydown", onKeyDown, { capture: true });
+    };
+  }, [joined]);
+
   const handleNicknameSubmit = (e: FormEvent) => {
     e.preventDefault();
     setNameError(null);
@@ -679,6 +728,105 @@ export default function ChatPage() {
     }
   };
 
+  const openCamera = useCallback(() => {
+    // Try getUserMedia first regardless of isSecureContext —
+    // it works on localhost and LAN in Chrome/Firefox even over HTTP.
+    if (navigator.mediaDevices?.getUserMedia) {
+      setCameraOpen(true);
+    } else if (cameraInputRef.current) {
+      // Last resort: native file picker with capture (mobile only, silently
+      // opens gallery on desktop — acceptable as absolute fallback)
+      cameraInputRef.current.click();
+    } else {
+      toast.error("Camera is not available in this browser.");
+    }
+  }, []);
+
+  const handleScreenTap = (event: ReactPointerEvent<HTMLDivElement>) => {
+    activePointerIdsRef.current.add(event.pointerId);
+
+    // A multi-finger gesture must never be interpreted as several taps.
+    // Cancel the current sequence as soon as a second pointer is present.
+    if (activePointerIdsRef.current.size > 1) {
+      multiPointerRef.current = true;
+      clickCountRef.current = 0;
+      lastClickRef.current = 0;
+      if (tapResetTimer.current) {
+        clearTimeout(tapResetTimer.current);
+        tapResetTimer.current = null;
+      }
+      return;
+    }
+
+    if (multiPointerRef.current) return;
+
+    const target = event.target as HTMLElement;
+
+    // Only respond to primary button / finger
+    if (event.button !== 0 && event.pointerType === "mouse") return;
+
+    // Ignore interactive elements and the composer
+    if (target.closest("button, input, textarea, a, [role=dialog], [role=button], select, label")) return;
+    if (target.closest(".chat-compose")) return;
+
+    const now = Date.now();
+    // Reset counter if gap between taps is too large (500ms)
+    if (now - lastClickRef.current > 500) clickCountRef.current = 0;
+    clickCountRef.current += 1;
+    lastClickRef.current = now;
+
+    // Auto-reset after 500ms of inactivity so a partial sequence
+    // (e.g. 2 taps then a long pause) never carries over to the next tap
+    if (tapResetTimer.current) clearTimeout(tapResetTimer.current);
+    tapResetTimer.current = setTimeout(() => { clickCountRef.current = 0; }, 500);
+
+    if (clickCountRef.current >= 3) {
+      clickCountRef.current = 0;
+      if (tapResetTimer.current) { clearTimeout(tapResetTimer.current); tapResetTimer.current = null; }
+
+      // Prevent browser's native triple-click text selection
+      event.preventDefault();
+      // Also clear any selection that snuck through on the 3rd click
+      window.getSelection()?.removeAllRanges();
+
+      openCamera();
+    }
+  };
+
+  const handleScreenPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    activePointerIdsRef.current.delete(event.pointerId);
+    if (activePointerIdsRef.current.size === 0) {
+      multiPointerRef.current = false;
+    }
+  };
+
+  const handleDragEnter = (event: ReactDragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    if (!event.dataTransfer.types.includes("Files")) return;
+    dragDepthRef.current += 1;
+    setDraggingFiles(true);
+  };
+
+  const handleDragOver = (event: ReactDragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes("Files")) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+
+  const handleDragLeave = (event: ReactDragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDraggingFiles(false);
+  };
+
+  const handleDrop = (event: ReactDragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    dragDepthRef.current = 0;
+    setDraggingFiles(false);
+    const files = Array.from(event.dataTransfer.files);
+    if (files.length > 0) void Promise.all(files.map((file) => handleFile(file)));
+  };
+
   const handleReceiveFile = async (msgId: string) => {
     const msg = messages.find((entry) => entry.id === msgId);
     if (!msg || msg.kind !== "file_offer" || msg.mine) return;
@@ -746,6 +894,9 @@ export default function ChatPage() {
           : msg.fileMeta.name;
 
     setReplyTo({ id: msgId, author: msg.author, preview });
+    // Focus the input immediately so the user can start typing without
+    // having to click — works for both swipe-to-reply and tap-to-reply
+    requestAnimationFrame(() => inputBarRef.current?.focus());
   }, [messages]);
 
   const leave = () => {
@@ -862,7 +1013,60 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="relative flex h-[100svh] md:h-[100dvh] overflow-hidden bg-black">
+    <div
+      className="relative flex h-[100svh] md:h-[100dvh] overflow-hidden bg-black"
+      onPointerDown={handleScreenTap}
+      onPointerUp={handleScreenPointerEnd}
+      onPointerCancel={handleScreenPointerEnd}
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) void handleFile(file);
+          event.target.value = "";
+        }}
+      />
+      {cameraOpen && (
+        <CameraCapture
+          onCapture={(file) => {
+            setCameraOpen(false);
+            void handleFile(file);
+          }}
+          onClose={() => setCameraOpen(false)}
+        />
+      )}
+
+      {/* Screenshot deterrence overlay */}
+      {screenshotWarning && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-0 z-[200] flex items-center justify-center bg-black/90 backdrop-blur-xl transition-opacity"
+        >
+          <div className="flex flex-col items-center gap-3 text-center px-8">
+            <span className="text-4xl select-none">🚫</span>
+            <p className="text-white/90 font-semibold text-lg tracking-tight">Screen capture detected</p>
+            <p className="text-white/45 text-sm">Browser apps cannot block phone screenshots or recordings.</p>
+          </div>
+        </div>
+      )}
+      {draggingFiles && !cameraOpen && (
+        <div className="pointer-events-none fixed inset-0 z-[80] flex items-center justify-center bg-black/45 p-6 backdrop-blur-[2px]">
+          <div className="rounded-2xl border border-primary/50 bg-[#10191a]/95 px-8 py-6 text-center shadow-[0_0_40px_hsl(var(--primary)/0.18)]">
+            <Paperclip className="mx-auto mb-2 h-7 w-7 text-primary" />
+            <p className="text-sm font-medium text-white">Drop to send</p>
+            <p className="mt-1 text-xs text-white/50">Images, videos, audio, or files</p>
+          </div>
+        </div>
+      )}
       <MemberPanel
         users={users}
         currentName={name}
@@ -975,7 +1179,7 @@ export default function ChatPage() {
               </div>
             )}
 
-            <div ref={scrollRef} className="messages-scroll flex-1 overflow-y-auto scrollbar-thin py-4 overscroll-contain">
+            <div ref={scrollRef} className={`messages-scroll flex-1 overflow-y-auto scrollbar-thin py-4 overscroll-contain transition-[padding] duration-200 ${sidebarOpen ? "lg:pl-[268px]" : ""}`}>
               <div className="messages-inner">
                 <div className="mb-5 flex justify-center">
                   <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-2.5 text-[11px] text-white/90 shadow-[0_0_26px_rgba(255,255,255,0.03)] backdrop-blur-md">
@@ -987,6 +1191,11 @@ export default function ChatPage() {
                     <span className="flex items-center gap-1.5 whitespace-nowrap text-white/82">
                       <FolderUp className="h-3.5 w-3.5 text-primary/90" />
                       <span>Folder sends ZIP</span>
+                    </span>
+                    <span className="h-3 w-px bg-white/12" />
+                    <span className="flex items-center gap-1.5 whitespace-nowrap text-white/82">
+                      <Camera className="h-3.5 w-3.5 text-primary/90" />
+                      <span>3 taps to snap</span>
                     </span>
                   </div>
                 </div>
@@ -1009,15 +1218,17 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className="chat-compose shrink-0">
+            <div className={`chat-compose shrink-0 transition-[padding] duration-200 ${sidebarOpen ? "lg:pl-[268px]" : ""}`}>
               <TypingIndicator typingUsers={typingUsers} />
               <InputBar
+                ref={inputBarRef}
                 onSend={handleSend}
                 onFile={handleFile}
                 replyTo={replyTo}
                 onCancelReply={() => setReplyTo(null)}
                 onTyping={() => socket.emit("typing", { name, room })}
                 onStopTyping={() => socket.emit("stop_typing", { name, room })}
+                onOpenCamera={() => openCamera()}
               />
             </div>
           </div>
