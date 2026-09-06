@@ -149,6 +149,7 @@ export default function ChatPage() {
   const tapResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activePointerIdsRef = useRef<Set<number>>(new Set());
   const multiPointerRef = useRef(false);
+  const cameraHistoryRef = useRef(false);
   const dragDepthRef = useRef(0);
 
   const tabFocused = useRef(true);
@@ -728,6 +729,28 @@ export default function ChatPage() {
     }
   };
 
+  const closeCamera = useCallback(() => {
+    setCameraOpen(false);
+    if (cameraHistoryRef.current && window.history.state?.annetCamera) {
+      cameraHistoryRef.current = false;
+      window.history.back();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!cameraOpen) return;
+
+    // Keep Android/browser Back inside the room while the camera overlay is open.
+    window.history.pushState({ ...window.history.state, annetCamera: true }, "", window.location.href);
+    cameraHistoryRef.current = true;
+    const onPopState = () => {
+      cameraHistoryRef.current = false;
+      setCameraOpen(false);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [cameraOpen]);
+
   const openCamera = useCallback(() => {
     // Try getUserMedia first regardless of isSecureContext —
     // it works on localhost and LAN in Chrome/Firefox even over HTTP.
@@ -743,7 +766,23 @@ export default function ChatPage() {
   }, []);
 
   const handleScreenTap = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // The camera overlay owns all of its own pointer events.
+    if (cameraOpen) return;
+
     activePointerIdsRef.current.add(event.pointerId);
+
+    // Only the primary touch can count toward the three-tap shortcut.
+    // A second finger cancels the sequence, so 3-finger gestures never open it.
+    if (event.pointerType === "touch" && !event.isPrimary) {
+      multiPointerRef.current = true;
+      clickCountRef.current = 0;
+      lastClickRef.current = 0;
+      if (tapResetTimer.current) {
+        clearTimeout(tapResetTimer.current);
+        tapResetTimer.current = null;
+      }
+      return;
+    }
 
     // A multi-finger gesture must never be interpreted as several taps.
     // Cancel the current sequence as soon as a second pointer is present.
@@ -1015,9 +1054,9 @@ export default function ChatPage() {
   return (
     <div
       className="relative flex h-[100svh] md:h-[100dvh] overflow-hidden bg-black"
-      onPointerDown={handleScreenTap}
-      onPointerUp={handleScreenPointerEnd}
-      onPointerCancel={handleScreenPointerEnd}
+      onPointerDownCapture={handleScreenTap}
+      onPointerUpCapture={handleScreenPointerEnd}
+      onPointerCancelCapture={handleScreenPointerEnd}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -1038,10 +1077,10 @@ export default function ChatPage() {
       {cameraOpen && (
         <CameraCapture
           onCapture={(file) => {
-            setCameraOpen(false);
+            closeCamera();
             void handleFile(file);
           }}
-          onClose={() => setCameraOpen(false)}
+          onClose={closeCamera}
         />
       )}
 
@@ -1182,7 +1221,7 @@ export default function ChatPage() {
             <div ref={scrollRef} className={`messages-scroll flex-1 overflow-y-auto scrollbar-thin py-4 overscroll-contain transition-[padding] duration-200 ${sidebarOpen ? "lg:pl-[268px]" : ""}`}>
               <div className="messages-inner">
                 <div className="mb-5 flex justify-center">
-                  <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-2.5 text-[11px] text-white/90 shadow-[0_0_26px_rgba(255,255,255,0.03)] backdrop-blur-md">
+                  <div className="inline-flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-2.5 text-center text-[11px] text-white/90 shadow-[0_0_26px_rgba(255,255,255,0.03)] backdrop-blur-md">
                     <span className="flex items-center gap-1.5 whitespace-nowrap">
                       <Code2 className="h-3.5 w-3.5 text-primary/90" />
                       <span>Use <code className="font-mono text-white">code:</code> for snippets</span>
@@ -1195,7 +1234,7 @@ export default function ChatPage() {
                     <span className="h-3 w-px bg-white/12" />
                     <span className="flex items-center gap-1.5 whitespace-nowrap text-white/82">
                       <Camera className="h-3.5 w-3.5 text-primary/90" />
-                      <span>3 taps to snap</span>
+                      <span>3 taps: snap photo</span>
                     </span>
                   </div>
                 </div>
