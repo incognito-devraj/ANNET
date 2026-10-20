@@ -8,6 +8,17 @@ const { addUser, removeUser, getUser, getUsersInRoom } = require("./utils/users"
 function setupSocket(io) {
   io.on("connection", (socket) => {
     socket.on("join_room", ({ name, room }) => {
+      const existing = getUser(socket.id);
+      // Socket.IO may replay a join after a transient reconnect. Treat an
+      // identical join as idempotent so it cannot create phantom leave/join
+      // notifications or replace the member with a new anonymous name.
+      if (existing && existing.room === room && existing.name === name) {
+        socket.join(room);
+        socket.emit("join_success", { room, user: existing, users: getUsersInRoom(room), albumSessionToken: socket.data.albumSessionToken });
+        io.to(room).emit("room_users", getUsersInRoom(room));
+        return;
+      }
+
       const result = addUser(socket.id, name, room);
       if (result.error) {
         socket.emit("error", result.error);
@@ -16,10 +27,13 @@ function setupSocket(io) {
 
       socket.join(room);
 
+      const albumSessionToken = Buffer.from(`${socket.id}:${Date.now()}:${Math.random()}`).toString("base64url");
+      socket.data.albumSessionToken = albumSessionToken;
       socket.emit("join_success", {
         room,
         user: result,
         users: getUsersInRoom(room),
+        albumSessionToken,
       });
 
       // Broadcast only to peers to avoid duplicate self-join system messages.

@@ -216,3 +216,8 @@ As the platform scales, the server will gain an auth layer:
   <sub>Built with ⚡ by the Annet team</sub>
 </div>
 
+# Album storage
+
+The album API stores originals and durable album metadata under `ANNET_STORAGE_DIR` (default: `server/storage`). It accepts image uploads over authenticated HTTP, supports resumable offset writes, and uses Socket.IO only for the `album_created` metadata event. Configure `ANNET_STORAGE_DIR` to a persistent volume in production; the default local directory is not durable on ephemeral hosts. `ANNET_MAX_IMAGE_BYTES` optionally sets the per-image limit (default 100 MB).
+
+For multi-instance production deployments, replace this filesystem adapter with an S3-compatible adapter (presigned PUT/GET URLs plus a shared database) and use sticky-free Socket.IO scaling/pub-sub. The current adapter is suitable for one process with persistent disk and does not claim provider-level bandwidth or concurrency guarantees.

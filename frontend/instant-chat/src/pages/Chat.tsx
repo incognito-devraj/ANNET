@@ -19,6 +19,7 @@ import InputBar, { type InputBarHandle } from "@/components/chat/InputBar";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import CameraCapture from "@/components/chat/CameraCapture";
 import { ChatMessage, ChatUser, FileMeta, ReplyTo } from "@/types/chat";
+import { albumImageUrl, albumZipUrl, listAlbums, registerAlbumSession, uploadAlbum } from "@/lib/albums";
 
 
 const VALID = /^[A-Za-z0-9_]{1,24}$/;
@@ -140,6 +141,7 @@ export default function ChatPage() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+  const shareDialogRef = useRef<HTMLDivElement>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -155,6 +157,7 @@ export default function ChatPage() {
   const pointerStartRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const eligiblePointerIdsRef = useRef<Set<number>>(new Set());
   const cameraHistoryRef = useRef(false);
+  const backPromptedRef = useRef(false);
   const dragDepthRef = useRef(0);
 
   const tabFocused = useRef(true);
@@ -167,6 +170,8 @@ export default function ChatPage() {
   const roomRef = useRef(room);
   const peerRefs = useRef<Map<string, PeerSession>>(new Map());
   const socketIdMap = useRef<Map<string, string | ((id: string) => void)>>(new Map());
+  const albumTokenRef = useRef<string | null>(null);
+  const albumReadyRef = useRef<Promise<void> | null>(null);
 
   const inviteUrl = `${window.location.origin}/${encodeURIComponent(room)}`;
 
@@ -188,6 +193,15 @@ export default function ChatPage() {
 
     return () => { cancelled = true; };
   }, [inviteUrl, shareDialogOpen]);
+
+  useEffect(() => {
+    if (!shareDialogOpen) return;
+    const closeOnOutsideTouch = (event: PointerEvent) => {
+      if (!shareDialogRef.current?.contains(event.target as Node)) setShareDialogOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideTouch, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideTouch, true);
+  }, [shareDialogOpen]);
 
 
   const emitWithAck = useCallback(<T,>(event: string, payload: unknown, timeoutMs = EMIT_ACK_TIMEOUT_MS) => (
@@ -271,6 +285,25 @@ export default function ChatPage() {
   }, [joined]);
 
   useEffect(() => {
+    if (!joined) return;
+    // Keep the first browser Back inside the room so accidental presses can
+    // be confirmed. The second Back confirms the leave action.
+    window.history.pushState({ ...window.history.state, annetRoom: true }, "", window.location.href);
+    const onPopState = () => {
+      if (backPromptedRef.current) {
+        backPromptedRef.current = false;
+        leave();
+        return;
+      }
+      backPromptedRef.current = true;
+      setLeaveDialogOpen(true);
+      window.history.pushState({ ...window.history.state, annetRoom: true }, "", window.location.href);
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [joined]);
+
+  useEffect(() => {
       const onConnect = () => {
       setConnected(true);
       setJoinStatus(`Joining #${roomRef.current}...`);
@@ -296,7 +329,7 @@ export default function ChatPage() {
       }
     };
 
-    const onJoinSuccess = (payload: { users?: unknown; user?: { name?: string } }) => {
+    const onJoinSuccess = (payload: { users?: unknown; user?: { name?: string }; albumSessionToken?: string }) => {
       const assignedName = payload.user?.name;
       if (assignedName) {
         setName(assignedName);
@@ -311,6 +344,15 @@ export default function ChatPage() {
       setJoined(true);
       setNameError(null);
       setJoinStatus("Connected.");
+      if (payload.albumSessionToken) {
+        const token = payload.albumSessionToken;
+        albumTokenRef.current = token;
+        sessionStorage.setItem(`annet_album_token_${roomRef.current}`, token);
+        albumReadyRef.current = registerAlbumSession(roomRef.current, assignedName || nameRef.current, token).then(async () => {
+          const history = await listAlbums(roomRef.current, token);
+          setMessages((prev) => { const known = new Set(prev.map((message) => message.id)); return [...prev, ...history.filter((album) => !known.has(album.id)).map((album) => ({ kind: "album" as const, id: album.id, author: album.author, mine: album.author === (assignedName || nameRef.current), album: { ...album, zipUrl: albumZipUrl(roomRef.current, token, album.id), attachments: album.attachments.map((item) => ({ ...item, url: albumImageUrl(roomRef.current, token, album.id, item.id) })) }, ts: album.ts }))]; });
+        }).catch((error) => { albumReadyRef.current = null; toast.error(`Album storage unavailable: ${error instanceof Error ? error.message : "backend not reachable"}`); throw error; });
+      }
     };
 
     const onRoomUsers = (list: unknown) => {
@@ -383,6 +425,12 @@ export default function ChatPage() {
         ts: payload.ts ?? Date.now(),
         replyTo: payload.replyTo,
       }]);
+    };
+    const onAlbumCreated = (album: import("@/types/chat").Album) => {
+      const token = sessionStorage.getItem(`annet_album_token_${roomRef.current}`);
+      if (!token) return;
+      playNotificationSound();
+      setMessages((prev) => prev.some((message) => message.id === album.id) ? prev : [...prev, { kind: "album", id: album.id, author: album.author, mine: album.author === nameRef.current, album: { ...album, zipUrl: albumZipUrl(roomRef.current, token, album.id), attachments: album.attachments.map((item) => ({ ...item, url: albumImageUrl(roomRef.current, token, album.id, item.id) })) }, ts: album.ts }]);
     };
     const onWebrtcOffer = (payload: {
       offer: RTCSessionDescriptionInit;
@@ -486,6 +534,7 @@ export default function ChatPage() {
     socket.on("user_left", onUserLeft);
     socket.on("receive_message", onReceiveMessage);
     socket.on("receive_media", onReceiveMedia);
+    socket.on("album_created", onAlbumCreated);
     socket.on("webrtc_offer", onWebrtcOffer);
     socket.on("webrtc_answer", onWebrtcAnswer);
     socket.on("ice_candidate", onIceCandidate);
@@ -503,6 +552,7 @@ export default function ChatPage() {
       socket.off("user_left", onUserLeft);
       socket.off("receive_message", onReceiveMessage);
       socket.off("receive_media", onReceiveMedia);
+      socket.off("album_created", onAlbumCreated);
       socket.off("webrtc_offer", onWebrtcOffer);
       socket.off("webrtc_answer", onWebrtcAnswer);
       socket.off("ice_candidate", onIceCandidate);
@@ -593,6 +643,7 @@ export default function ChatPage() {
   const joinRoom = (chosenName: string) => {
     setName(chosenName);
     nameRef.current = chosenName;
+    if (chosenName) sessionStorage.setItem(`annet_name_${room}`, chosenName);
     setJoining(true);
     setJoinStatus(connected ? `Joining #${room}...` : "Connecting to chat server...");
 
@@ -625,7 +676,7 @@ export default function ChatPage() {
   useEffect(() => {
     const pending = sessionStorage.getItem("annet_pending_nick") ?? "";
     sessionStorage.removeItem("annet_pending_nick");
-    const chosenName = pending.trim();
+    const chosenName = pending.trim() || sessionStorage.getItem(`annet_name_${room}`) || "";
 
     let finalName: string;
     if (chosenName && VALID.test(chosenName)) {
@@ -640,6 +691,7 @@ export default function ChatPage() {
     }
 
     setNameInput(finalName);
+    sessionStorage.setItem(`annet_name_${room}`, finalName);
     joinRoom(finalName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -688,6 +740,13 @@ export default function ChatPage() {
     }
 
     if (!ensureRoomReady()) return;
+
+    // Every image, including a single photo, uses persistent HTTP storage.
+    // Socket.IO is limited to the resulting album metadata notification.
+    if (file.type.startsWith("image/")) {
+      await handleAlbum([file]);
+      return;
+    }
 
     const isSmallMedia =
       file.size <= MAX_SOCKET_MEDIA_SIZE &&
@@ -798,6 +857,23 @@ export default function ChatPage() {
       toast.error("Failed to initiate file transfer.");
       console.error("[webrtc] sender init failed", error);
     }
+  };
+
+  const handleAlbum = async (files: File[], caption = "") => {
+    if (!ensureRoomReady()) return;
+    const valid = files.filter((file) => file.type.startsWith("image/"));
+    if (!valid.length) { toast.error("Choose one or more images."); return; }
+    if (albumReadyRef.current) {
+      try { await albumReadyRef.current; } catch { return; }
+    }
+    const token = albumTokenRef.current || sessionStorage.getItem(`annet_album_token_${room}`);
+    if (!token) { toast.error("Album storage is not ready yet."); return; }
+    const placeholderId = uid();
+    setMessages((prev) => [...prev, { kind: "system", id: placeholderId, message: `Uploading album (0/${valid.length})…`, ts: Date.now() }]);
+    try {
+      const album = await uploadAlbum(room, token, valid, caption, (percent) => setMessages((prev) => prev.map((message) => message.id === placeholderId && message.kind === "system" ? { ...message, message: `Uploading album (${percent}%)…` } : message)));
+      setMessages((prev) => { const withoutPlaceholder = prev.filter((message) => message.id !== placeholderId); if (withoutPlaceholder.some((message) => message.id === album.id)) return withoutPlaceholder; return [...withoutPlaceholder, { kind: "album", id: album.id, author: name, mine: true, album: { ...album, zipUrl: albumZipUrl(room, token, album.id), attachments: album.attachments.map((item) => ({ ...item, url: albumImageUrl(room, token, album.id, item.id) })) }, ts: album.ts }]; });
+    } catch (error) { setMessages((prev) => prev.filter((message) => message.id !== placeholderId)); toast.error(error instanceof Error ? error.message : "Album upload failed."); }
   };
 
   const closeCamera = useCallback(() => {
@@ -1026,6 +1102,8 @@ export default function ChatPage() {
         ? msg.code.slice(0, 80)
         : msg.kind === "media"
           ? `[media] ${msg.fileMeta.name}`
+          : msg.kind === "album"
+            ? `[album] ${msg.album.attachments.length} photos`
           : msg.fileMeta.name;
 
     setReplyTo({ id: msgId, author: msg.author, preview });
@@ -1255,6 +1333,7 @@ export default function ChatPage() {
                 onClick={(e) => { if (e.target === e.currentTarget) setShareDialogOpen(false); }}
               >
                 <div
+                  ref={shareDialogRef}
                   className="w-full max-w-[360px] rounded-3xl border border-white/10 bg-[#11151c] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.65)]"
                   role="dialog"
                   aria-modal="true"
@@ -1388,6 +1467,7 @@ export default function ChatPage() {
                 ref={inputBarRef}
                 onSend={handleSend}
                 onFile={handleFile}
+                onAlbum={handleAlbum}
                 replyTo={replyTo}
                 onCancelReply={() => setReplyTo(null)}
                 onTyping={() => socket.emit("typing", { name, room })}

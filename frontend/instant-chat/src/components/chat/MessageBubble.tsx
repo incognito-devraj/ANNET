@@ -8,6 +8,9 @@ import {
   FileImage, FileText, FileVideo, FileAudio,
   FileIcon, Reply, X, ZoomIn,
 } from "lucide-react";
+import type { Album } from "@/types/chat";
+import { albumImageDownloadUrl } from "@/lib/albums";
+import { toast } from "sonner";
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -331,6 +334,56 @@ function SharedReplyPreview({ msg }: { msg: Extract<ChatMessage, { replyTo?: unk
   );
 }
 
+function AlbumBubble({ album, onOpen }: { album: Album; onOpen: (index: number) => void }) {
+  const visible = album.attachments.slice(0, 4);
+  return <div className="w-full max-w-[360px]">
+    <div className="grid grid-cols-2 gap-1 overflow-hidden rounded-xl">
+      {visible.map((item, index) => <button key={item.id} type="button" onClick={() => onOpen(index)} className="relative aspect-square overflow-hidden bg-black/30"><img src={item.url} loading="lazy" alt={item.name} className="h-full w-full object-cover transition-transform hover:scale-105" />{index === 3 && album.attachments.length > 4 && <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-xl font-semibold text-white">+{album.attachments.length - 4}</span>}</button>)}
+    </div>
+    {album.caption && <p className="mt-2 text-sm text-white/80">{album.caption}</p>}
+    <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/10 pt-3"><span className="text-[11px] text-white/45">{album.attachments.length} original {album.attachments.length === 1 ? "photo" : "photos"}</span><span className="flex gap-2"><a href={album.zipUrl || "#"} download className="rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20">Download all</a><button type="button" onClick={() => onOpen(0)} className="rounded-xl bg-primary px-3 py-2 text-[11px] font-semibold text-primary-foreground transition-transform hover:scale-[1.02]">View photos</button></span></div>
+  </div>;
+}
+
+function AlbumViewer({ album, index, onClose, onChange }: { album: Album; index: number; onClose: () => void; onChange: (index: number) => void }) {
+  const startX = useRef<number | null>(null);
+  const item = album.attachments[index];
+  const [dragX, setDragX] = useState(0);
+  const [downloadState, setDownloadState] = useState<"idle" | "downloading" | "downloaded">("idle");
+  useEffect(() => { setDownloadState("idle"); }, [item.id]);
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+      if (event.key === "ArrowLeft") onChange(Math.max(0, index - 1));
+      if (event.key === "ArrowRight") onChange(Math.min(album.attachments.length - 1, index + 1));
+    };
+    window.addEventListener("keydown", key); document.body.style.overflow = "hidden";
+    return () => { window.removeEventListener("keydown", key); document.body.style.overflow = ""; };
+  }, [album.attachments.length, index, onChange, onClose]);
+  const download = async () => {
+    if (downloadState === "downloading") return;
+    setDownloadState("downloading");
+    try {
+      const response = await fetch(albumImageDownloadUrl(item.url), { cache: "no-store" });
+      if (!response.ok) throw new Error("The photo could not be downloaded.");
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = blobUrl; link.download = item.name; link.style.display = "none";
+      document.body.appendChild(link); link.click(); link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+      setDownloadState("downloaded");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "The photo could not be downloaded.");
+      setDownloadState("idle");
+    }
+  };
+  return <div className="fixed inset-0 z-[100] flex flex-col bg-black/95" style={{ touchAction: "pan-y" }} onTouchStart={(event) => { startX.current = event.changedTouches[0].clientX; setDragX(0); }} onTouchMove={(event) => { if (startX.current !== null) setDragX(event.changedTouches[0].clientX - startX.current); }} onTouchEnd={(event) => { if (startX.current === null) return; const delta = event.changedTouches[0].clientX - startX.current; startX.current = null; setDragX(0); if (Math.abs(delta) > 45) onChange(Math.max(0, Math.min(album.attachments.length - 1, index + (delta < 0 ? 1 : -1)))); }}>
+    <div className="flex items-center justify-end p-4"><button type="button" onClick={onClose} className="rounded-full bg-white/10 p-2 text-white" aria-label="Close viewer"><X /></button></div>
+    <div className="relative flex min-h-0 flex-1 items-center justify-center px-14"><button type="button" disabled={index === 0} onClick={() => onChange(index - 1)} className="absolute left-3 rounded-full bg-white/10 p-3 text-2xl text-white disabled:opacity-20" aria-label="Previous photo">‹</button><img src={item.url} alt={item.name} className="max-h-full max-w-full select-none object-contain transition-transform duration-200" style={{ transform: `translateX(${dragX}px)`, opacity: Math.max(0.65, 1 - Math.abs(dragX) / 500) }} draggable={false} /><button type="button" disabled={index === album.attachments.length - 1} onClick={() => onChange(index + 1)} className="absolute right-3 rounded-full bg-white/10 p-3 text-2xl text-white disabled:opacity-20" aria-label="Next photo">›</button></div>
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 flex justify-center px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3"><div className="pointer-events-auto flex max-w-full items-center gap-2 rounded-2xl border border-white/15 bg-[#111820]/90 p-2 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-xl"><span className="hidden max-w-[180px] truncate px-2 text-xs text-white/60 sm:inline">{index + 1} / {album.attachments.length} · {item.name}</span><a href={album.zipUrl || "#"} download className="rounded-xl border border-white/15 px-3 py-2.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/10">Download all</a><button type="button" onClick={() => void download()} disabled={downloadState === "downloading"} className="rounded-xl bg-primary px-3 py-2.5 text-xs font-semibold text-primary-foreground transition-opacity disabled:opacity-60">{downloadState === "downloading" ? "Downloading…" : downloadState === "downloaded" ? "Downloaded" : "Download this photo"}</button></div></div>
+  </div>;
+}
+
 function ReplyAccessibilityButton({ id, onReply }: { id: string; onReply?: (id: string) => void }) {
   if (!onReply) return null;
 
@@ -358,6 +411,7 @@ export default function MessageBubble({
   onReply?: (id: string) => void;
 }) {
   const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [albumIndex, setAlbumIndex] = useState(-1);
   const [swipeOffset, setSwipeOffset] = useState(0);
   const dragState = useRef<{ x: number; y: number; active: boolean; pointerId: number | null }>({
     x: 0,
@@ -374,6 +428,11 @@ export default function MessageBubble({
         </span>
       </div>
     );
+  }
+
+  if (msg.kind === "album") {
+    const openAlbum = (index: number) => setAlbumIndex(index);
+    return <><div id={`msg-${msg.id}`} className={`flex flex-col ${msg.mine ? "items-end" : "items-start"} mt-3 w-full`}><span className={`mb-1 px-2 text-[11px] font-semibold tracking-wide ${msg.mine ? "text-primary/80" : "text-white/60"}`}>{msg.mine ? "You" : msg.author}</span><div className={`message ${msg.mine ? "sent" : "received"} has-tail min-w-0 max-w-[380px] rounded-2xl border border-white/10 p-2 shadow-[0_8px_30px_rgba(0,0,0,0.16)]`}>{<AlbumBubble album={msg.album} onOpen={openAlbum} />}</div></div>{albumIndex >= 0 && <AlbumViewer album={msg.album} index={albumIndex} onClose={() => setAlbumIndex(-1)} onChange={setAlbumIndex} />}</>;
   }
 
   const mine = msg.mine;

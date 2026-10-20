@@ -9,6 +9,9 @@ export type FileMeta = {
   mimeType?: string;
 };
 
+export type AlbumAttachment = FileMeta & { id: string; url: string };
+export type Album = { id: string; author: string; caption?: string; ts: number; zipUrl?: string; attachments: AlbumAttachment[] };
+
 export type ReplyTo = {
   id: string;
   author: string;
@@ -62,6 +65,15 @@ export type ChatMessage =
       mine: boolean;
       dataUrl: string;
       fileMeta: FileMeta;
+      ts: number;
+      replyTo?: ReplyTo;
+    }
+  | {
+      kind: "album";
+      id: string;
+      author: string;
+      mine: boolean;
+      album: Album;
       ts: number;
       replyTo?: ReplyTo;
     };

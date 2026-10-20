@@ -6,6 +6,7 @@ const express = require("express");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const { setupSocket } = require("./socket");
+const { setupAlbumApi } = require("./albums");
 
 const app = express();
 const server = http.createServer(app);
@@ -25,7 +26,8 @@ const corsOptions = {
       callback(new Error("Not allowed by CORS"));
     }
   },
-  methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Upload-Offset"],
 };
 
 const io = new Server(server, {
@@ -37,7 +39,8 @@ const io = new Server(server, {
   pingInterval: 25000,
   // 10 MB buffer — base64 encoding adds ~33% overhead, so a 5 MB file
   // becomes ~6.7 MB on the wire. 10 MB gives comfortable headroom.
-  maxHttpBufferSize: 10 * 1024 * 1024,
+  // Media bytes use the HTTP album API, never Socket.IO.
+  maxHttpBufferSize: 1 * 1024 * 1024,
 });
 
 app.use(cors(corsOptions));
@@ -46,6 +49,7 @@ app.get("/health", (_req, res) => {
 });
 
 setupSocket(io);
+setupAlbumApi(app, io);
 
 const PORT = process.env.PORT || 3001;
 

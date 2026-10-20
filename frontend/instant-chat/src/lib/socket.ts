@@ -3,7 +3,7 @@ import { io, Socket } from "socket.io-client";
 const DEFAULT_PRODUCTION_BACKEND_URL = "https://annet-q0ai.onrender.com";
 const SOCKET_TIMEOUT_MS = 20000;
 
-function getBackendUrl() {
+export function getBackendUrl() {
   // Explicit override always wins (set in .env files)
   const configuredUrl = import.meta.env.VITE_BACKEND_URL?.trim();
   if (configuredUrl) return configuredUrl;
