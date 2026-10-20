@@ -1,0 +1,11 @@
+# Raw design assets — large source files, not needed in repo
+ANNET GRAPHICS 2.o/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+*.suo
+*.sw?
