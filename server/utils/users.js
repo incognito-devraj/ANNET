@@ -9,6 +9,7 @@ const usersById = new Map();
 
 // Room index: room → (name → user)
 const roomMembers = new Map();
+const roomJoinCounters = new Map();
 
 function getRoomMap(room) {
   let members = roomMembers.get(room);
@@ -20,16 +21,30 @@ function getRoomMap(room) {
 }
 
 function addUser(id, name, room) {
-  if (!name || name.length > NICKNAME_MAX_LENGTH) {
-    return { error: "Nickname must be 24 characters or fewer." };
-  }
-  if (!NICKNAME_PATTERN.test(name)) {
-    return { error: "Nickname may only contain letters, numbers, and underscores." };
-  }
-
   const members = getRoomMap(room);
-  if (members.has(name)) {
-    return { error: "Nickname already taken in this room." };
+  const requestedName = typeof name === "string" ? name.trim() : "";
+  let assignedName = requestedName;
+
+  if (!assignedName) {
+    let nextNumber = roomJoinCounters.get(room) ?? 0;
+    do {
+      nextNumber += 1;
+      assignedName = `Annetz_${nextNumber}`;
+    } while (members.has(assignedName));
+    roomJoinCounters.set(room, nextNumber);
+  } else {
+    if (assignedName.length > NICKNAME_MAX_LENGTH) {
+      return { error: "Nickname must be 24 characters or fewer." };
+    }
+    if (!NICKNAME_PATTERN.test(assignedName)) {
+      return { error: "Nickname may only contain letters, numbers, and underscores." };
+    }
+    if (members.has(assignedName)) {
+      return { error: "Nickname already taken in this room." };
+    }
+
+    const currentCounter = roomJoinCounters.get(room) ?? 0;
+    roomJoinCounters.set(room, currentCounter + 1);
   }
 
   // Clean up any stale entry for this socket.id
@@ -38,9 +53,9 @@ function addUser(id, name, room) {
     removeUser(id);
   }
 
-  const user = { id, name, room };
+  const user = { id, name: assignedName, room };
   usersById.set(id, user);
-  members.set(name, user);
+  members.set(assignedName, user);
   return user;
 }
 
@@ -54,6 +69,7 @@ function removeUser(id) {
     members.delete(user.name);
     if (members.size === 0) {
       roomMembers.delete(user.room);
+      roomJoinCounters.delete(user.room);
     }
   }
 

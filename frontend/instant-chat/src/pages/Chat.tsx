@@ -275,11 +275,11 @@ export default function ChatPage() {
   useEffect(() => {
       const onConnect = () => {
       setConnected(true);
-      setJoinStatus("Connected. Enter a nickname to continue.");
+      setJoinStatus("Connected. Enter a nickname or continue anonymously.");
       // Only re-join if the user had already submitted their nickname
       // (i.e. a mid-session reconnect). Do NOT auto-join on first connect —
       // that would race with handleNicknameSubmit.
-      if (nameRef.current && roomRef.current && hasJoinedRoom.current) {
+      if (roomRef.current && hasJoinedRoom.current) {
         setJoinStatus(`Rejoining #${roomRef.current}...`);
         socket.emit("join_room", {
           name: nameRef.current,
@@ -300,7 +300,12 @@ export default function ChatPage() {
       }
     };
 
-    const onJoinSuccess = (payload: { users?: unknown }) => {
+    const onJoinSuccess = (payload: { users?: unknown; user?: { name?: string } }) => {
+      const assignedName = payload.user?.name;
+      if (assignedName) {
+        setName(assignedName);
+        nameRef.current = assignedName;
+      }
       if (Array.isArray(payload.users)) {
         setUsers(payload.users.map((user) =>
           typeof user === "string" ? { name: user } : { id: user?.id, name: user?.name ?? String(user) }
@@ -582,7 +587,7 @@ export default function ChatPage() {
     setNameError(null);
 
     const chosenName = nameInput.trim();
-    if (!VALID.test(chosenName)) {
+    if (chosenName && !VALID.test(chosenName)) {
       setNameError("1-24 chars, letters, numbers, underscores only.");
       return;
     }
@@ -1067,16 +1072,16 @@ export default function ChatPage() {
             <h1 className="text-2xl font-bold tracking-tight">
               Joining <span className="text-primary">#{room}</span>
             </h1>
-            <p className="text-muted-foreground mt-1 text-sm">
-              {joining ? joinStatus : "Pick a nickname to enter"}
+          <p className="text-muted-foreground mt-1 text-sm">
+              {joining ? joinStatus : "Pick a nickname or join anonymously"}
             </p>
           </div>
           <form onSubmit={handleNicknameSubmit} className="bg-card/70 backdrop-blur border border-border rounded-2xl p-6 space-y-4 shadow-2xl">
             <div className="space-y-2">
-              <label className="text-sm font-medium text-muted-foreground">Nickname</label>
+              <label className="text-sm font-medium text-muted-foreground">Nickname (optional)</label>
               <Input
                 autoFocus
-                placeholder="e.g. shadow_42"
+                placeholder="Leave blank for Annetz_#"
                 value={nameInput}
                 maxLength={24}
                 onChange={(e) => setNameInput(e.target.value)}
