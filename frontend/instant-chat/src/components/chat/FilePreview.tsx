@@ -272,7 +272,7 @@ export default function FilePreview({ file, onConfirm, onCancel }: Props) {
             <span style={S.title}>Send file</span>
             <span style={S.badge}>{isP2P ? "P2P · WebRTC" : "Socket · Direct"}</span>
           </div>
-          <button style={S.closeBtn} onClick={onCancel} aria-label="Cancel">
+          <button type="button" style={S.closeBtn} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onCancel(); }} aria-label="Cancel">
             <X size={16} />
           </button>
         </div>

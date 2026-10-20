@@ -290,6 +290,9 @@ export default function ChatPage() {
     // be confirmed. The second Back confirms the leave action.
     window.history.pushState({ ...window.history.state, annetRoom: true }, "", window.location.href);
     const onPopState = () => {
+      // A photo viewer owns the first Back press. Do not turn it into a room
+      // leave action; the viewer's own popstate handler will close it.
+      if (document.querySelector("[data-album-viewer=\"true\"]")) return;
       if (backPromptedRef.current) {
         backPromptedRef.current = false;
         leave();
