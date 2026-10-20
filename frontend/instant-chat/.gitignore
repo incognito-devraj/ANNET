@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Stray workspace file
+*.code-workspace
+
+# Raw source assets (uncompressed originals — WebP versions in public/assets/ are committed)
+public/assets/*.png

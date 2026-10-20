@@ -3,7 +3,7 @@ import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } f
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import QRCode from "qrcode";
-import { Camera, Code2, Copy, FolderUp, Mail, Paperclip, VenetianMask } from "lucide-react";
+import { Camera, Code2, Copy, FolderUp, Mail, Paperclip } from "lucide-react";
 import { socket, connectSocket, disconnectSocket, leaveSocketRoom } from "@/lib/socket";
 import {
   checkFileSecurity,
@@ -19,8 +19,7 @@ import InputBar, { type InputBarHandle } from "@/components/chat/InputBar";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import CameraCapture from "@/components/chat/CameraCapture";
 import { ChatMessage, ChatUser, FileMeta, ReplyTo } from "@/types/chat";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+
 
 const VALID = /^[A-Za-z0-9_]{1,24}$/;
 const JOIN_TIMEOUT_MS = 25000;
@@ -140,7 +139,6 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
-  const [qrDialogOpen, setQrDialogOpen] = useState(false);
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [unread, setUnread] = useState(0);
@@ -173,12 +171,12 @@ export default function ChatPage() {
   const inviteUrl = `${window.location.origin}/${encodeURIComponent(room)}`;
 
   useEffect(() => {
-    if (!qrDialogOpen) return;
+    if (!shareDialogOpen) return;
 
     let cancelled = false;
     setQrCodeDataUrl(null);
     void QRCode.toDataURL(inviteUrl, {
-      width: 280,
+      width: 240,
       margin: 2,
       errorCorrectionLevel: "M",
       color: { dark: "#0d0f12", light: "#ffffff" },
@@ -189,7 +187,7 @@ export default function ChatPage() {
     });
 
     return () => { cancelled = true; };
-  }, [inviteUrl, qrDialogOpen]);
+  }, [inviteUrl, shareDialogOpen]);
 
 
   const emitWithAck = useCallback(<T,>(event: string, payload: unknown, timeoutMs = EMIT_ACK_TIMEOUT_MS) => (
@@ -275,12 +273,10 @@ export default function ChatPage() {
   useEffect(() => {
       const onConnect = () => {
       setConnected(true);
-      setJoinStatus("Connected. Enter a nickname or continue anonymously.");
-      // Only re-join if the user had already submitted their nickname
-      // (i.e. a mid-session reconnect). Do NOT auto-join on first connect —
-      // that would race with handleNicknameSubmit.
+      setJoinStatus(`Joining #${roomRef.current}...`);
+      // Emit join_room whenever we have a room and have initiated a join
+      // (first connect from auto-join on mount, or mid-session reconnect)
       if (roomRef.current && hasJoinedRoom.current) {
-        setJoinStatus(`Rejoining #${roomRef.current}...`);
         socket.emit("join_room", {
           name: nameRef.current,
           room: roomRef.current,
@@ -453,6 +449,17 @@ export default function ChatPage() {
     const onError = (value: unknown) => {
       const text = typeof value === "string" ? value : (value as { message?: string })?.message ?? "Unknown error";
       if (!joinedRef.current) {
+        // If the auto-generated serial name was rejected (e.g. collision), bump the counter and retry
+        const currentName = nameRef.current;
+        if (/^\d+_Anneter$/.test(currentName)) {
+          const seqKey = `annet_seq_${room}`;
+          const seq = parseInt(localStorage.getItem(seqKey) ?? "0", 10) + 1;
+          localStorage.setItem(seqKey, String(seq));
+          const retryName = `${seq}_Anneter`;
+          setNameInput(retryName);
+          joinRoom(retryName);
+          return;
+        }
         setNameError(text);
         setJoining(false);
         hasJoinedRoom.current = false;
@@ -582,16 +589,8 @@ export default function ChatPage() {
     };
   }, [joined]);
 
-  const handleNicknameSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    setNameError(null);
-
-    const chosenName = nameInput.trim();
-    if (chosenName && !VALID.test(chosenName)) {
-      setNameError("1-24 chars, letters, numbers, underscores only.");
-      return;
-    }
-
+  // Core join logic shared by the form submit and the sessionStorage auto-join
+  const joinRoom = (chosenName: string) => {
     setName(chosenName);
     nameRef.current = chosenName;
     setJoining(true);
@@ -608,6 +607,42 @@ export default function ChatPage() {
     // If not yet connected, onConnect will fire and re-emit because
     // hasJoinedRoom is true and nameRef/roomRef are set.
   };
+
+  const handleNicknameSubmit = (e: FormEvent) => {
+    e.preventDefault();
+    setNameError(null);
+
+    const chosenName = nameInput.trim();
+    if (chosenName && !VALID.test(chosenName)) {
+      setNameError("1-24 chars, letters, numbers, underscores only.");
+      return;
+    }
+
+    joinRoom(chosenName);
+  };
+
+  // Always auto-join on mount — generate N_Anneter serial name if no nickname was set
+  useEffect(() => {
+    const pending = sessionStorage.getItem("annet_pending_nick") ?? "";
+    sessionStorage.removeItem("annet_pending_nick");
+    const chosenName = pending.trim();
+
+    let finalName: string;
+    if (chosenName && VALID.test(chosenName)) {
+      finalName = chosenName;
+    } else {
+      // Assign a per-room serial number stored in localStorage
+      // Key: annet_seq_<room> → increments each time a new anonymous user joins
+      const seqKey = `annet_seq_${room}`;
+      const seq = parseInt(localStorage.getItem(seqKey) ?? "0", 10) + 1;
+      localStorage.setItem(seqKey, String(seq));
+      finalName = `${seq}_Anneter`;
+    }
+
+    setNameInput(finalName);
+    joinRoom(finalName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const ensureRoomReady = useCallback(() => {
     if (socket.connected && joinedRef.current) return true;
@@ -856,7 +891,11 @@ export default function ChatPage() {
   };
 
   const handleScreenPointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {
+    // A cancelled pointer (OS gesture, scroll takeover, etc.) is NEVER a tap
+    const isCancelled = event.type === "pointercancel";
+
     const wasSingleCleanTap =
+      !isCancelled &&
       activePointerIdsRef.current.size === 1 &&
       !multiPointerRef.current &&
       !movedPointerIdsRef.current.has(event.pointerId) &&
@@ -878,7 +917,7 @@ export default function ChatPage() {
 
       if (clickCountRef.current >= 3) {
         clickCountRef.current = 0;
-        clearTimeout(tapResetTimer.current);
+        clearTimeout(tapResetTimer.current!);
         tapResetTimer.current = null;
         event.preventDefault();
         window.getSelection()?.removeAllRanges();
@@ -886,6 +925,8 @@ export default function ChatPage() {
       }
     }
 
+    // When all pointers are lifted/cancelled, reset multi-touch state so
+    // the next independent gesture starts clean
     if (activePointerIdsRef.current.size === 0) {
       multiPointerRef.current = false;
       movedPointerIdsRef.current.clear();
@@ -1061,49 +1102,21 @@ export default function ChatPage() {
 
   if (!VALID.test(room)) return null;
 
+  // Show the styled landing background while the socket handshake completes
   if (!joined) {
     return (
-      <div className="min-h-full flex items-center justify-center px-4 py-12">
-        <div className="w-full max-w-sm">
-          <div className="flex flex-col items-center mb-8 select-none">
-            <div className="h-12 w-12 rounded-2xl bg-primary/15 border border-primary/30 flex items-center justify-center mb-4 shadow-[0_0_40px_-10px_hsl(var(--primary)/0.6)]">
-              <VenetianMask className="h-6 w-6 text-primary" />
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight">
-              Joining <span className="text-primary">#{room}</span>
-            </h1>
-          <p className="text-muted-foreground mt-1 text-sm">
-              {joining ? joinStatus : "Pick a nickname or join anonymously"}
-            </p>
-          </div>
-          <form onSubmit={handleNicknameSubmit} className="bg-card/70 backdrop-blur border border-border rounded-2xl p-6 space-y-4 shadow-2xl">
-            <div className="space-y-2">
-              <label className="text-sm font-medium text-muted-foreground">Nickname (optional)</label>
-              <Input
-                autoFocus
-                placeholder="Leave blank for Annetz_#"
-                value={nameInput}
-                maxLength={24}
-                onChange={(e) => setNameInput(e.target.value)}
-                disabled={joining}
-                className="bg-secondary/60 border-border h-11"
-              />
-            </div>
-            {nameError && (
-              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/30 rounded-md px-3 py-2">
-                {nameError}
-              </div>
-            )}
-            {!nameError && !connected && (
-              <div className="text-sm text-emerald-100/80 bg-emerald-500/10 border border-emerald-400/20 rounded-md px-3 py-2">
-                {joinStatus}
-              </div>
-            )}
-            <Button type="submit" disabled={joining} className="w-full h-11 text-base font-semibold">
-              {joining ? "Joining..." : "Enter Room"}
-            </Button>
-          </form>
+      <div style={{ position: "fixed", inset: 0, background: "#020912", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, overflow: "hidden" }}>
+        <div style={{ position: "absolute", inset: 0, zIndex: 0, backgroundImage: "url('/assets/Cinematic Blue Earth Horizon.webp')", backgroundSize: "cover", backgroundPosition: "center bottom", opacity: 0.52 }} />
+        <div style={{ position: "absolute", inset: 0, zIndex: 1, pointerEvents: "none" as const, background: "radial-gradient(ellipse 90% 60% at 50% 0%, rgba(0,120,200,.18) 0%, transparent 65%), radial-gradient(ellipse 110% 85% at 50% 50%, rgba(0,15,45,.50) 0%, transparent 78%)" }} />
+        <img src="/assets/logo.webp" alt="ANNET" draggable={false} style={{ position: "relative", zIndex: 2, width: "clamp(200px, 55vw, 300px)", objectFit: "contain", mixBlendMode: "screen" as const, filter: "drop-shadow(0 0 24px rgba(0,190,255,.35))", userSelect: "none" as const }} />
+        <div style={{ position: "relative", zIndex: 2, display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 10 }}>
+          <div style={{ width: 28, height: 28, border: "2.5px solid rgba(0,210,255,.15)", borderTopColor: "#00d4ff", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+          <p style={{ color: "rgba(0,200,240,.60)", fontSize: 13, margin: 0, letterSpacing: "0.06em" }}>{joinStatus || "Connecting…"}</p>
         </div>
+        <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 2, height: "22vh", overflow: "hidden", pointerEvents: "none" as const }}>
+          <img src="/assets/Cinematic Blue Earth Horizon.webp" alt="" style={{ width: "100%", height: "100%", objectFit: "cover", objectPosition: "center top", mixBlendMode: "screen" as const, opacity: 0.88, display: "block" }} draggable={false} />
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
@@ -1187,54 +1200,9 @@ export default function ChatPage() {
               shareCopied={linkCopied}
               onToggleMembers={() => setSidebarOpen((current) => !current)}
               onShareInvite={shareInvite}
-              onShowQr={() => setQrDialogOpen(true)}
               onLeave={requestLeave}
             />
 
-            {qrDialogOpen && (
-              <div
-                className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 px-4 backdrop-blur-sm"
-                role="presentation"
-                onClick={(event) => {
-                  if (event.target === event.currentTarget) setQrDialogOpen(false);
-                }}
-              >
-                <div
-                  className="w-full max-w-[360px] rounded-3xl border border-white/10 bg-[#11151c]/98 p-5 text-center shadow-[0_20px_80px_rgba(0,0,0,0.6)]"
-                  role="dialog"
-                  aria-modal="true"
-                  aria-labelledby="room-qr-title"
-                >
-                  <h2 id="room-qr-title" className="text-lg font-semibold text-white">
-                    Scan to join this room
-                  </h2>
-                  <div className="mx-auto mt-4 flex min-h-[280px] w-[280px] items-center justify-center rounded-2xl bg-white p-3">
-                    {qrCodeDataUrl ? (
-                      <img src={qrCodeDataUrl} alt={`QR code for room ${room}`} className="h-full w-full" />
-                    ) : (
-                      <span className="text-sm text-black/50">Generating QR code...</span>
-                    )}
-                  </div>
-                  <p className="mt-3 break-all font-mono text-xs text-white/45">{inviteUrl}</p>
-                  <div className="mt-4 flex justify-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setQrDialogOpen(false)}
-                      className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/75 transition-colors hover:bg-white/[0.07]"
-                    >
-                      Close
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { void copyInviteLink(); }}
-                      className="rounded-xl bg-[#1a9e6e] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#20b87f]"
-                    >
-                      Copy link
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
 
             {leaveDialogOpen && (
               <div
@@ -1282,86 +1250,95 @@ export default function ChatPage() {
 
             {shareDialogOpen && (
               <div
-                className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center bg-black/60 px-3 pb-4 sm:px-4 sm:pb-0"
-                role="dialog"
-                aria-modal="true"
-                aria-label="Share room invite"
+                className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center bg-black/65 px-3 pb-4 sm:px-4 sm:pb-0 backdrop-blur-sm"
+                role="presentation"
                 onClick={(e) => { if (e.target === e.currentTarget) setShareDialogOpen(false); }}
               >
-                <div className="w-full max-w-[360px] rounded-3xl border border-white/10 bg-[#11151c]/98 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+                <div
+                  className="w-full max-w-[360px] rounded-3xl border border-white/10 bg-[#11151c] p-5 shadow-[0_20px_80px_rgba(0,0,0,0.65)]"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label="Share room invite"
+                >
                   {/* Header */}
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] uppercase tracking-[0.22em] text-white/45">Share invite</span>
+                  <div className="mb-4 flex items-center justify-between">
+                    <span className="text-[11px] uppercase tracking-[0.22em] text-white/40">Share room</span>
+                    <button
+                      type="button"
+                      onClick={() => setShareDialogOpen(false)}
+                      className="flex h-7 w-7 items-center justify-center rounded-full bg-white/[0.06] text-white/50 hover:bg-white/[0.12] hover:text-white/80 transition-colors text-[14px] leading-none"
+                      aria-label="Close"
+                    >✕</button>
                   </div>
 
-                  {/* Invite text */}
-                  <p className="mt-2 text-sm leading-6 text-white/80">
-                    Hey let&apos;s connect anonymously here in my ANNET room:
+                  {/* QR code */}
+                  <div className="mx-auto flex w-[200px] items-center justify-center rounded-2xl bg-white p-2.5">
+                    {qrCodeDataUrl
+                      ? <img src={qrCodeDataUrl} alt={`QR code for room ${room}`} className="h-[175px] w-[175px]" />
+                      : <div className="flex h-[175px] w-[175px] items-center justify-center text-xs text-black/40">Generating…</div>
+                    }
+                  </div>
+
+                  {/* Room URL */}
+                  <p className="mt-3 break-all rounded-xl border border-white/8 bg-white/[0.03] px-3 py-2 text-center font-mono text-[12px] text-emerald-300/80">
+                    {inviteUrl}
                   </p>
 
-                  {/* Room URL pill */}
-                  <p className="mt-2 break-all rounded-2xl border border-white/8 bg-white/[0.03] px-3 py-2 text-[13px] text-emerald-300/90 font-mono">
-                    {`${window.location.origin}/${encodeURIComponent(room)}`}
-                  </p>
+                  {/* Divider */}
+                  <div className="my-4 flex items-center gap-3">
+                    <span className="h-px flex-1 bg-white/[0.07]" />
+                    <span className="text-[10px] uppercase tracking-[0.18em] text-white/25">share via</span>
+                    <span className="h-px flex-1 bg-white/[0.07]" />
+                  </div>
 
-                  {/* Share buttons — 2 columns on mobile, 4 on wider screens */}
-                  <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {/* Bare app icons — no rectangle boxes */}
+                  <div className="flex items-start justify-center gap-7">
                     {/* WhatsApp */}
                     <button
                       type="button"
                       onClick={() => openShareTarget("whatsapp")}
-                      className="flex flex-col items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-2 py-3 text-white hover:bg-white/[0.07] active:scale-95 transition-all"
+                      className="flex flex-col items-center gap-2 outline-none group"
                     >
-                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#25D366] text-white shadow-[0_0_12px_rgba(37,211,102,0.35)]">
+                      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#25D366] shadow-[0_0_16px_rgba(37,211,102,0.30)] transition-transform group-hover:scale-110 group-active:scale-95">
                         <WhatsAppIcon />
                       </span>
-                      <span className="text-[11px] text-white/80 leading-tight">WhatsApp</span>
+                      <span className="text-[10px] text-white/45">WhatsApp</span>
                     </button>
 
                     {/* Telegram */}
                     <button
                       type="button"
                       onClick={() => openShareTarget("telegram")}
-                      className="flex flex-col items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-2 py-3 text-white hover:bg-white/[0.07] active:scale-95 transition-all"
+                      className="flex flex-col items-center gap-2 outline-none group"
                     >
-                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-[#229ED9] text-white shadow-[0_0_12px_rgba(34,158,217,0.35)]">
+                      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-[#229ED9] shadow-[0_0_16px_rgba(34,158,217,0.30)] transition-transform group-hover:scale-110 group-active:scale-95">
                         <TelegramIcon />
                       </span>
-                      <span className="text-[11px] text-white/80 leading-tight">Telegram</span>
+                      <span className="text-[10px] text-white/45">Telegram</span>
                     </button>
 
                     {/* Email */}
                     <button
                       type="button"
                       onClick={() => openShareTarget("email")}
-                      className="flex flex-col items-center gap-2 rounded-2xl border border-white/8 bg-white/[0.03] px-2 py-3 text-white hover:bg-white/[0.07] active:scale-95 transition-all"
+                      className="flex flex-col items-center gap-2 outline-none group"
                     >
-                      <span className="flex h-10 w-10 items-center justify-center rounded-full bg-white/10 text-white">
-                        <Mail className="h-5 w-5" />
+                      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-white/[0.10] shadow-[0_0_16px_rgba(255,255,255,0.06)] transition-transform group-hover:scale-110 group-active:scale-95">
+                        <Mail className="h-5 w-5 text-white/80" />
                       </span>
-                      <span className="text-[11px] text-white/80 leading-tight">Email</span>
+                      <span className="text-[10px] text-white/45">Email</span>
                     </button>
                   </div>
 
-                  {/* Footer actions */}
-                  <div className="mt-4 flex items-center justify-between gap-3">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="text-white/60 hover:text-white hover:bg-white/[0.06]"
-                      onClick={() => setShareDialogOpen(false)}
-                    >
-                      Close
-                    </Button>
-                    <Button
-                      type="button"
-                      className="inline-flex items-center gap-2 bg-primary/90 hover:bg-primary text-white font-medium"
-                      onClick={async () => { await copyInviteLink(); }}
-                    >
-                      <Copy className="h-4 w-4" />
-                      {linkCopied ? "Copied!" : "Copy link"}
-                    </Button>
-                  </div>
+                  {/* Copy link */}
+                  <button
+                    type="button"
+                    onClick={async () => { await copyInviteLink(); }}
+                    className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-[#1a9e6e]/90 py-3 text-sm font-semibold text-white transition-colors hover:bg-[#20b87f] active:scale-[0.98]"
+                  >
+                    <Copy className="h-4 w-4" />
+                    {linkCopied ? "Copied!" : "Copy link"}
+                  </button>
                 </div>
               </div>
             )}
@@ -1369,19 +1346,19 @@ export default function ChatPage() {
             <div ref={scrollRef} className={`messages-scroll flex-1 overflow-y-auto scrollbar-thin py-4 overscroll-contain transition-[padding] duration-200 ${sidebarOpen ? "lg:pl-[268px]" : ""}`}>
               <div className="messages-inner">
                 <div className="mb-5 flex justify-center">
-                  <div className="inline-flex max-w-[calc(100vw-1.5rem)] flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-2.5 text-center text-[11px] text-white/90 shadow-[0_0_26px_rgba(255,255,255,0.03)] backdrop-blur-md">
-                    <span className="flex items-center gap-1.5 whitespace-nowrap">
-                      <Code2 className="h-3.5 w-3.5 text-primary/90" />
+                  <div className="inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.045] px-4 py-2.5 text-[11px] text-white/90 shadow-[0_0_26px_rgba(255,255,255,0.03)] backdrop-blur-md whitespace-nowrap">
+                    <span className="flex items-center gap-1.5">
+                      <Code2 className="h-3.5 w-3.5 text-primary/90 shrink-0" />
                       <span>Use <code className="font-mono text-white">code:</code> for snippets</span>
                     </span>
-                    <span className="h-3 w-px bg-white/12" />
-                    <span className="flex items-center gap-1.5 whitespace-nowrap text-white/82">
-                      <FolderUp className="h-3.5 w-3.5 text-primary/90" />
+                    <span className="h-3 w-px bg-white/15 shrink-0" />
+                    <span className="flex items-center gap-1.5">
+                      <FolderUp className="h-3.5 w-3.5 text-primary/90 shrink-0" />
                       <span>Folder sends ZIP</span>
                     </span>
-                    <span className="h-3 w-px bg-white/12" />
-                    <span className="flex items-center gap-1.5 whitespace-nowrap text-white/82">
-                      <Camera className="h-3.5 w-3.5 text-primary/90" />
+                    <span className="h-3 w-px bg-white/15 shrink-0" />
+                    <span className="flex items-center gap-1.5">
+                      <Camera className="h-3.5 w-3.5 text-primary/90 shrink-0" />
                       <span>3 taps to snap</span>
                     </span>
                   </div>

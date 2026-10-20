@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, LogOut, QrCode, Share2, Shield, Users } from "lucide-react";
+import { Check, LogOut, Share2, Shield, Users } from "lucide-react";
 import { ChatUser } from "@/types/chat";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,7 +25,6 @@ type TopBarProps = {
   shareCopied: boolean;
   onToggleMembers: () => void;
   onShareInvite: () => void;
-  onShowQr: () => void;
   onLeave: () => void;
 };
 
@@ -39,8 +38,13 @@ type ActionButtonProps = {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function initials(name: string) {
-  return name.slice(0, 2).toUpperCase();
+// Returns the display label for an avatar:
+// - N_Anneter  →  shows the number (e.g. "1", "23")
+// - custom name →  shows first 2 letters uppercased
+function avatarLabel(name: string) {
+  const serial = name.match(/^(\d+)_Anneter$/);
+  if (serial) return serial[1];           // "1", "23", etc.
+  return name.slice(0, 2).toUpperCase();  // "SH", "AB", etc.
 }
 
 function colorFor(name: string) {
@@ -128,7 +132,6 @@ export function ChatTopBar({
   shareCopied,
   onToggleMembers,
   onShareInvite,
-  onShowQr,
   onLeave,
 }: TopBarProps) {
   const statusDotClass = connected
@@ -172,14 +175,6 @@ export function ChatTopBar({
                 <Users className="h-3 w-3" />
                 <span>{usersCount} {usersCount === 1 ? "member" : "members"}</span>
               </div>
-            </button>
-            <button
-              type="button"
-              onClick={onShowQr}
-              aria-label="Show room QR code"
-              className="mr-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[#d8d2c5] transition-colors hover:bg-white/[0.09] hover:text-white lg:h-11 lg:w-11"
-            >
-              <QrCode className="h-4 w-4" />
             </button>
           </div>
 
@@ -240,14 +235,6 @@ export function ChatTopBar({
                   {usersCount} {usersCount === 1 ? "member" : "members"}
                 </span>
               </div>
-              </button>
-              <button
-                type="button"
-                onClick={onShowQr}
-                aria-label="Show room QR code"
-                className="ml-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[#d8d2c5] transition-colors hover:bg-white/[0.09] hover:text-white lg:h-11 lg:w-11"
-              >
-                <QrCode className="h-4 w-4" />
               </button>
             </div>
           </div>
@@ -365,13 +352,16 @@ export function MemberPanel({
                     {/* Avatar with colored glow — mask-icon style */}
                     <div className="relative shrink-0">
                       <div
-                        className="flex h-9 w-9 items-center justify-center rounded-2xl text-[14px] font-semibold text-white"
+                        className="flex h-9 w-9 items-center justify-center rounded-2xl text-white"
                         style={{
                           backgroundColor: avatarBg,
+                          fontSize: avatarLabel(u.name).length === 1 ? 17 : avatarLabel(u.name).length >= 3 ? 11 : 14,
+                          fontWeight: 700,
+                          letterSpacing: avatarLabel(u.name).length >= 3 ? "-0.03em" : "0",
                           boxShadow: `0 0 14px ${glowColor}, inset 0 1px 0 rgba(255,255,255,0.15)`,
                         }}
                       >
-                        {initials(u.name)}
+                        {avatarLabel(u.name)}
                       </div>
                       {/* Online dot */}
                       <span
