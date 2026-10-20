@@ -139,6 +139,7 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
   const [messageFontSize, setMessageFontSize] = useState(15);
@@ -981,6 +982,8 @@ export default function ChatPage() {
     });
   };
 
+  const requestLeave = () => setLeaveDialogOpen(true);
+
   const copyInviteLink = async () => {
     const url = `${window.location.origin}/${encodeURIComponent(room)}`;
 
@@ -1155,8 +1158,52 @@ export default function ChatPage() {
               shareCopied={linkCopied}
               onToggleMembers={() => setSidebarOpen((current) => !current)}
               onShareInvite={shareInvite}
-              onLeave={leave}
+              onLeave={requestLeave}
             />
+
+            {leaveDialogOpen && (
+              <div
+                className="fixed inset-0 z-[80] flex items-center justify-center bg-black/65 px-4 backdrop-blur-sm"
+                role="presentation"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) setLeaveDialogOpen(false);
+                }}
+              >
+                <div
+                  className="w-full max-w-[360px] rounded-3xl border border-white/10 bg-[#11151c]/98 p-5 shadow-[0_20px_80px_rgba(0,0,0,0.6)]"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="leave-room-title"
+                  aria-describedby="leave-room-description"
+                >
+                  <h2 id="leave-room-title" className="text-lg font-semibold text-white">
+                    Leave this chat room?
+                  </h2>
+                  <p id="leave-room-description" className="mt-2 text-sm leading-6 text-white/60">
+                    You&apos;ll be disconnected from this room and return to the home screen.
+                  </p>
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setLeaveDialogOpen(false)}
+                      className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/75 transition-colors hover:bg-white/[0.07]"
+                    >
+                      Stay
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setLeaveDialogOpen(false);
+                        leave();
+                      }}
+                      className="rounded-xl bg-[#b85c68] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#c96a76]"
+                    >
+                      Leave room
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {shareDialogOpen && (
               <div
