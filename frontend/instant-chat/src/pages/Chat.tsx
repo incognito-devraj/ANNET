@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, FormEvent } from "react";
 import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
+import QRCode from "qrcode";
 import { Camera, Code2, Copy, FolderUp, Mail, Paperclip, VenetianMask } from "lucide-react";
 import { socket, connectSocket, disconnectSocket, leaveSocketRoom } from "@/lib/socket";
 import {
@@ -139,6 +140,8 @@ export default function ChatPage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [shareDialogOpen, setShareDialogOpen] = useState(false);
+  const [qrDialogOpen, setQrDialogOpen] = useState(false);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [unread, setUnread] = useState(0);
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -166,6 +169,27 @@ export default function ChatPage() {
   const roomRef = useRef(room);
   const peerRefs = useRef<Map<string, PeerSession>>(new Map());
   const socketIdMap = useRef<Map<string, string | ((id: string) => void)>>(new Map());
+
+  const inviteUrl = `${window.location.origin}/${encodeURIComponent(room)}`;
+
+  useEffect(() => {
+    if (!qrDialogOpen) return;
+
+    let cancelled = false;
+    setQrCodeDataUrl(null);
+    void QRCode.toDataURL(inviteUrl, {
+      width: 280,
+      margin: 2,
+      errorCorrectionLevel: "M",
+      color: { dark: "#0d0f12", light: "#ffffff" },
+    }).then((dataUrl) => {
+      if (!cancelled) setQrCodeDataUrl(dataUrl);
+    }).catch(() => {
+      if (!cancelled) toast.error("Couldn't generate the room QR code.");
+    });
+
+    return () => { cancelled = true; };
+  }, [inviteUrl, qrDialogOpen]);
 
 
   const emitWithAck = useCallback(<T,>(event: string, payload: unknown, timeoutMs = EMIT_ACK_TIMEOUT_MS) => (
@@ -1158,8 +1182,54 @@ export default function ChatPage() {
               shareCopied={linkCopied}
               onToggleMembers={() => setSidebarOpen((current) => !current)}
               onShareInvite={shareInvite}
+              onShowQr={() => setQrDialogOpen(true)}
               onLeave={requestLeave}
             />
+
+            {qrDialogOpen && (
+              <div
+                className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 px-4 backdrop-blur-sm"
+                role="presentation"
+                onClick={(event) => {
+                  if (event.target === event.currentTarget) setQrDialogOpen(false);
+                }}
+              >
+                <div
+                  className="w-full max-w-[360px] rounded-3xl border border-white/10 bg-[#11151c]/98 p-5 text-center shadow-[0_20px_80px_rgba(0,0,0,0.6)]"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="room-qr-title"
+                >
+                  <h2 id="room-qr-title" className="text-lg font-semibold text-white">
+                    Scan to join this room
+                  </h2>
+                  <div className="mx-auto mt-4 flex min-h-[280px] w-[280px] items-center justify-center rounded-2xl bg-white p-3">
+                    {qrCodeDataUrl ? (
+                      <img src={qrCodeDataUrl} alt={`QR code for room ${room}`} className="h-full w-full" />
+                    ) : (
+                      <span className="text-sm text-black/50">Generating QR code...</span>
+                    )}
+                  </div>
+                  <p className="mt-3 break-all font-mono text-xs text-white/45">{inviteUrl}</p>
+                  <div className="mt-4 flex justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setQrDialogOpen(false)}
+                      className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/75 transition-colors hover:bg-white/[0.07]"
+                    >
+                      Close
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void copyInviteLink(); }}
+                      className="rounded-xl bg-[#1a9e6e] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[#20b87f]"
+                    >
+                      Copy link
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {leaveDialogOpen && (
               <div

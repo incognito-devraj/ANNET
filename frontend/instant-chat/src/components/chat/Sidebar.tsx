@@ -1,6 +1,6 @@
 import { ReactNode, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, LogOut, Share2, Shield, Users } from "lucide-react";
+import { Check, LogOut, QrCode, Share2, Shield, Users } from "lucide-react";
 import { ChatUser } from "@/types/chat";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -25,6 +25,7 @@ type TopBarProps = {
   shareCopied: boolean;
   onToggleMembers: () => void;
   onShareInvite: () => void;
+  onShowQr: () => void;
   onLeave: () => void;
 };
 
@@ -127,6 +128,7 @@ export function ChatTopBar({
   shareCopied,
   onToggleMembers,
   onShareInvite,
+  onShowQr,
   onLeave,
 }: TopBarProps) {
   const statusDotClass = connected
@@ -151,25 +153,35 @@ export function ChatTopBar({
 
           <div className="mx-0 my-3 w-px self-stretch bg-white/10" />
 
-          <button
-            type="button"
-            onClick={onToggleMembers}
-            className="flex min-w-0 flex-1 flex-col items-center justify-center text-center outline-none"
-            aria-label={sidebarOpen ? "Close room members" : "Open room members"}
-            aria-expanded={sidebarOpen}
-          >
-            <div className="flex max-w-full items-center justify-center gap-2">
-              <span className="font-mono text-[13px] text-[#f3efe4]">#</span>
-              <span className="truncate font-mono text-[19px] font-light tracking-[0.04em] text-[#f3efe4] [text-shadow:0_0_14px_rgba(243,239,228,0.12)]">
-                {room}
-              </span>
-              <span className={`h-2.5 w-2.5 rounded-full ${statusDotClass}`} />
-            </div>
-            <div className="mt-1.5 flex items-center justify-center gap-2 text-[11px] text-[#1a9e6e]">
-              <Users className="h-3 w-3" />
-              <span>{usersCount} {usersCount === 1 ? "member" : "members"}</span>
-            </div>
-          </button>
+          <div className="flex min-w-0 flex-1 items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={onToggleMembers}
+              className="flex min-w-0 flex-1 flex-col items-center justify-center text-center outline-none"
+              aria-label={sidebarOpen ? "Close room members" : "Open room members"}
+              aria-expanded={sidebarOpen}
+            >
+              <div className="flex max-w-full items-center justify-center gap-2">
+                <span className="font-mono text-[13px] text-[#f3efe4]">#</span>
+                <span className="truncate font-mono text-[19px] font-light tracking-[0.04em] text-[#f3efe4] [text-shadow:0_0_14px_rgba(243,239,228,0.12)]">
+                  {room}
+                </span>
+                <span className={`h-2.5 w-2.5 rounded-full ${statusDotClass}`} />
+              </div>
+              <div className="mt-1.5 flex items-center justify-center gap-2 text-[11px] text-[#1a9e6e]">
+                <Users className="h-3 w-3" />
+                <span>{usersCount} {usersCount === 1 ? "member" : "members"}</span>
+              </div>
+            </button>
+            <button
+              type="button"
+              onClick={onShowQr}
+              aria-label="Show room QR code"
+              className="mr-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[#d8d2c5] transition-colors hover:bg-white/[0.09] hover:text-white lg:h-11 lg:w-11"
+            >
+              <QrCode className="h-4 w-4" />
+            </button>
+          </div>
 
           <div className="mr-4 flex shrink-0 items-center gap-0 pt-2">
             <ActionButton
@@ -210,13 +222,14 @@ export function ChatTopBar({
             </motion.button>
 
             {/* Room name + count stays below logo on mobile */}
-            <button
-              type="button"
-              onClick={onToggleMembers}
-              className="mt-0.5 min-w-0 max-w-full pl-4 text-left outline-none"
-              aria-label={sidebarOpen ? "Close room members" : "Open room members"}
-              aria-expanded={sidebarOpen}
-            >
+            <div className="mt-0.5 flex min-w-0 max-w-full items-center pl-4">
+              <button
+                type="button"
+                onClick={onToggleMembers}
+                className="min-w-0 max-w-full text-left outline-none"
+                aria-label={sidebarOpen ? "Close room members" : "Open room members"}
+                aria-expanded={sidebarOpen}
+              >
               <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap">
                 <span className="shrink-0 font-mono text-[12px] text-[#f3efe4]">#</span>
                 <span className="truncate font-mono text-[10px] font-light tracking-[0.02em] text-[#f3efe4]">
@@ -227,7 +240,16 @@ export function ChatTopBar({
                   {usersCount} {usersCount === 1 ? "member" : "members"}
                 </span>
               </div>
-            </button>
+              </button>
+              <button
+                type="button"
+                onClick={onShowQr}
+                aria-label="Show room QR code"
+                className="ml-2 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-[#d8d2c5] transition-colors hover:bg-white/[0.09] hover:text-white lg:h-11 lg:w-11"
+              >
+                <QrCode className="h-4 w-4" />
+              </button>
+            </div>
           </div>
 
           <div className="flex shrink-0 items-centre gap-0 pt-3.5">
