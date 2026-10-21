@@ -174,6 +174,7 @@ export default function ChatPage() {
   const socketIdMap = useRef<Map<string, string | ((id: string) => void)>>(new Map());
   const albumTokenRef = useRef<string | null>(null);
   const albumReadyRef = useRef<Promise<void> | null>(null);
+  const albumUploadControllersRef = useRef<Map<string, AbortController>>(new Map());
 
   const inviteUrl = `${window.location.origin}/${encodeURIComponent(room)}`;
 
@@ -884,11 +885,24 @@ export default function ChatPage() {
     const token = albumTokenRef.current || sessionStorage.getItem(`annet_album_token_${room}`);
     if (!token) { toast.error("Album storage is not ready yet."); return; }
     const placeholderId = uid();
-    setMessages((prev) => [...prev, { kind: "system", id: placeholderId, message: `Uploading album (0/${valid.length})…`, ts: Date.now() }]);
+    const controller = new AbortController();
+    albumUploadControllersRef.current.set(placeholderId, controller);
+    setMessages((prev) => [...prev, {
+      kind: "system",
+      id: placeholderId,
+      message: `Uploading album (0/${valid.length})…`,
+      ts: Date.now(),
+      action: { label: "Cancel", onClick: () => controller.abort() },
+    }]);
     try {
-      const album = await uploadAlbum(room, token, valid, caption, (percent) => setMessages((prev) => prev.map((message) => message.id === placeholderId && message.kind === "system" ? { ...message, message: `Uploading album (${percent}%)…` } : message)));
-      setMessages((prev) => { const withoutPlaceholder = prev.filter((message) => message.id !== placeholderId); if (withoutPlaceholder.some((message) => message.id === album.id)) return withoutPlaceholder; return [...withoutPlaceholder, { kind: "album", id: album.id, author: name, mine: true, album: { ...album, zipUrl: albumZipUrl(room, token, album.id), attachments: album.attachments.map((item) => ({ ...item, url: albumImageUrl(room, token, album.id, item.id) })) }, ts: album.ts }]; });
-    } catch (error) { setMessages((prev) => prev.filter((message) => message.id !== placeholderId)); toast.error(error instanceof Error ? error.message : "Album upload failed."); }
+      const album = await uploadAlbum(room, token, valid, caption, (percent, completed) => setMessages((prev) => prev.map((message) => message.id === placeholderId && message.kind === "system" ? { ...message, message: `Uploading album (${completed}/${valid.length}) · ${percent}%` } : message)), controller.signal);
+      setMessages((prev) => { const withoutPlaceholder = prev.filter((message) => message.id !== placeholderId); if (withoutPlaceholder.some((message) => message.id === album.id)) return withoutPlaceholder; return [...withoutPlaceholder, { kind: "album", id: album.id, author: nameRef.current, mine: true, album: { ...album, zipUrl: albumZipUrl(room, token, album.id), attachments: album.attachments.map((item) => ({ ...item, url: albumImageUrl(room, token, album.id, item.id) })) }, ts: album.ts }]; });
+    } catch (error) {
+      setMessages((prev) => prev.filter((message) => message.id !== placeholderId));
+      if (!controller.signal.aborted) toast.error(error instanceof Error ? error.message : "Album upload failed.");
+    } finally {
+      albumUploadControllersRef.current.delete(placeholderId);
+    }
   };
 
   const closeCamera = useCallback((afterCapture = false) => {
@@ -1343,7 +1357,7 @@ export default function ChatPage() {
 
             {shareDialogOpen && (
               <div
-                className="fixed inset-0 z-[70] flex items-end justify-center sm:items-center bg-black/65 px-3 pb-4 sm:px-4 sm:pb-0 backdrop-blur-sm"
+                  className="fixed inset-0 z-[70] flex items-center justify-center bg-black/65 px-3 sm:px-4 backdrop-blur-sm"
                 role="presentation"
                 onClick={(e) => { if (e.target === e.currentTarget) setShareDialogOpen(false); }}
               >

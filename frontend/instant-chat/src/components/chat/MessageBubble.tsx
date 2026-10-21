@@ -452,8 +452,9 @@ export default function MessageBubble({
   if (msg.kind === "system") {
     return (
       <div className="flex justify-center my-3 px-2">
-        <span className="text-[11px] text-muted-foreground/50 bg-black/20 backdrop-blur-sm px-3 py-1 rounded-full border border-white/[0.06]">
-          {msg.message}
+        <span className="inline-flex items-center gap-2 text-[11px] text-muted-foreground/70 bg-black/20 backdrop-blur-sm px-3 py-1 rounded-full border border-white/[0.06]">
+          <span>{msg.message}</span>
+          {msg.action && <button type="button" onClick={msg.action.onClick} className="rounded-full border border-primary/30 px-2 py-0.5 font-medium text-primary hover:bg-primary/10">{msg.action.label}</button>}
         </span>
       </div>
     );
@@ -461,7 +462,7 @@ export default function MessageBubble({
 
   if (msg.kind === "album") {
     const openAlbum = (index: number) => setAlbumIndex(index);
-    return <><div id={`msg-${msg.id}`} className={`flex flex-col ${msg.mine ? "items-end" : "items-start"} mt-3 w-full`}><span className={`mb-1 px-2 text-[11px] font-semibold tracking-wide ${msg.mine ? "text-primary/80" : "text-white/60"}`}>{msg.mine ? "You" : msg.author}</span><div className={`message ${msg.mine ? "sent" : "received"} has-tail min-w-0 max-w-[380px] rounded-2xl border border-white/10 p-2 shadow-[0_8px_30px_rgba(0,0,0,0.16)]`}>{<AlbumBubble album={msg.album} onOpen={openAlbum} />}</div></div>{albumIndex >= 0 && <AlbumViewer album={msg.album} index={albumIndex} onClose={() => setAlbumIndex(-1)} onChange={setAlbumIndex} />}</>;
+    return <><div id={`msg-${msg.id}`} className={`flex flex-col ${msg.mine ? "items-end" : "items-start"} mt-3 w-full`}><span className={`mb-1 px-2 text-[11px] font-semibold tracking-wide ${msg.mine ? "text-primary/80" : "text-white/60"}`}>{msg.mine ? "You" : msg.author}</span><div style={{ alignSelf: msg.mine ? "flex-end" : "flex-start" }} className={`message ${msg.mine ? "sent" : "received"} has-tail min-w-0 max-w-[380px] rounded-2xl border border-white/10 p-2 shadow-[0_8px_30px_rgba(0,0,0,0.16)]`}>{<AlbumBubble album={msg.album} onOpen={openAlbum} />}</div></div>{albumIndex >= 0 && <AlbumViewer album={msg.album} index={albumIndex} onClose={() => setAlbumIndex(-1)} onChange={setAlbumIndex} />}</>;
   }
 
   const mine = msg.mine;

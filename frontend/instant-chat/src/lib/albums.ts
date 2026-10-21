@@ -15,7 +15,7 @@ export async function listAlbums(room: string, token: string): Promise<Album[]> 
   return (await response.json()).albums || [];
 }
 
-export async function uploadAlbum(room: string, token: string, files: File[], caption: string, onProgress: (value: number) => void, signal?: AbortSignal) {
+export async function uploadAlbum(room: string, token: string, files: File[], caption: string, onProgress: (value: number, completed: number) => void, signal?: AbortSignal) {
   const uploaded: { uploadId: string }[] = [];
   let complete = 0;
   const concurrency = Math.min(3, files.length);
@@ -28,7 +28,7 @@ export async function uploadAlbum(room: string, token: string, files: File[], ca
       const { uploadId, uploadUrl } = await init.json();
       const response = await fetch(`${base}${uploadUrl}`, { method: "PUT", headers: { ...auth(token), "Content-Type": file.type, "X-Upload-Offset": "0" }, body: file, signal });
       if (!response.ok) throw new Error((await response.json()).error || `Upload failed for ${file.name}`);
-      uploaded[index] = { uploadId }; complete += 1; onProgress(Math.round((complete / files.length) * 100));
+      uploaded[index] = { uploadId }; complete += 1; onProgress(Math.round((complete / files.length) * 100), complete);
     }
   };
   await Promise.all(Array.from({ length: concurrency }, worker));

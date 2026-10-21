@@ -42,6 +42,7 @@ const InputBar = forwardRef<InputBarHandle, Props>(function InputBar({
   const photoRef = useRef<HTMLInputElement>(null);
   const addPhotoRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerRef = useRef<HTMLDivElement>(null);
   const stopTypingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useImperativeHandle(ref, () => ({
@@ -77,6 +78,15 @@ const InputBar = forwardRef<InputBarHandle, Props>(function InputBar({
     textarea.style.height = `${Math.max(44, nextHeight)}px`;
     textarea.style.overflowY = textarea.scrollHeight > 132 ? "auto" : "hidden";
   }, [value, replyTo]);
+
+  useEffect(() => {
+    if (!attachmentsOpen) return;
+    const closeOnOutsideInteraction = (event: globalThis.PointerEvent) => {
+      if (!composerRef.current?.contains(event.target as Node)) setAttachmentsOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideInteraction, true);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideInteraction, true);
+  }, [attachmentsOpen]);
 
   const stageFile = (file: File) => {
     setAttachmentsOpen(false);
@@ -199,7 +209,7 @@ const InputBar = forwardRef<InputBarHandle, Props>(function InputBar({
         onChange={(e) => { void stageFolder(e.target.files); }}
       />
 
-      <div className="relative bg-transparent">
+      <div ref={composerRef} className="relative bg-transparent">
         {/* Attachment panel — slides up above the composer */}
         <div
           className={[
@@ -329,6 +339,7 @@ const InputBar = forwardRef<InputBarHandle, Props>(function InputBar({
               placeholder={replyTo ? `Reply to ${replyTo.author}…` : "Message…"}
               value={value}
               onChange={(e) => {
+                setAttachmentsOpen(false);
                 setValue(e.target.value);
                 if (e.target.value) onTyping?.();
                 if (stopTypingTimer.current) clearTimeout(stopTypingTimer.current);
@@ -336,6 +347,7 @@ const InputBar = forwardRef<InputBarHandle, Props>(function InputBar({
                   onStopTyping?.();
                 }, 1500);
               }}
+              onFocus={() => setAttachmentsOpen(false)}
               onKeyDown={onKey}
               className="w-full min-h-[40px] max-h-[120px] resize-none overflow-y-hidden bg-white/[0.045] border border-white/[0.09] rounded-[18px] px-3.5 py-[9px] text-[15px] focus:outline-none focus:ring-1 focus:ring-primary/45 focus:border-primary/30 focus:bg-white/[0.07] scrollbar-thin leading-[1.35] placeholder:text-muted-foreground/40 transition-[background-color,border-color] duration-150"
             />

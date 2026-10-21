@@ -42,6 +42,7 @@ export type ChatMessage =
       id: string;
       message: string;
       ts: number;
+      action?: { label: string; onClick: () => void };
     }
   | {
       kind: "file_offer";

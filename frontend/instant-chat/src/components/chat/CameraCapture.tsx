@@ -7,7 +7,7 @@ type Props = {
 
 const MAX_CAPTURE_EDGE = 1600;
 
-function makePhotoFile(video: HTMLVideoElement, zoom = 1): File | null {
+function makePhotoFile(video: HTMLVideoElement, zoom = 1, mirrored = false): File | null {
   if (!video.videoWidth || !video.videoHeight) return null;
   const scale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(video.videoWidth, video.videoHeight));
   const canvas = document.createElement("canvas");
@@ -17,7 +17,13 @@ function makePhotoFile(video: HTMLVideoElement, zoom = 1): File | null {
   const sourceHeight = video.videoHeight / zoom;
   const sourceX = (video.videoWidth - sourceWidth) / 2;
   const sourceY = (video.videoHeight - sourceHeight) / 2;
-  canvas.getContext("2d")?.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+  if (mirrored) {
+    context.translate(canvas.width, 0);
+    context.scale(-1, 1);
+  }
+  context.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
   const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
   const bytes = atob(dataUrl.split(",")[1]);
   const buf = new Uint8Array(bytes.length);
@@ -62,14 +68,23 @@ export default function CameraCapture({ onCapture }: Props) {
     try {
       const videoConstraints: MediaTrackConstraints = deviceId
         ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
-        : { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } };
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: videoConstraints,
-        audio: false,
-      });
+        : { facingMode: { exact: mode }, width: { ideal: 1280 }, height: { ideal: 720 } };
+      let stream: MediaStream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+      } catch {
+        // Some laptop drivers do not expose facingMode. Keep a fallback for
+        // those cameras while preserving exact front/back selection on phones.
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+      }
       streamRef.current = stream;
       const track = stream.getVideoTracks()[0];
       activeDeviceIdRef.current = track?.getSettings?.().deviceId ?? deviceId ?? null;
+      const actualFacing = track?.getSettings?.().facingMode;
+      setFacing(actualFacing === "user" || actualFacing === "environment" ? actualFacing : mode);
       setZoom(1);
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch {
@@ -100,11 +115,7 @@ export default function CameraCapture({ onCapture }: Props) {
     setFlipping(true);
     const next: FacingMode = facing === "environment" ? "user" : "environment";
     try {
-      const devices = (await navigator.mediaDevices.enumerateDevices())
-        .filter((device) => device.kind === "videoinput");
-      const nextDevice = devices.find((device) => device.deviceId !== activeDeviceIdRef.current);
-      await startStream(next, nextDevice?.deviceId);
-      setFacing(next);
+      await startStream(next);
     } finally {
       setFlipping(false);
     }
@@ -118,7 +129,7 @@ export default function CameraCapture({ onCapture }: Props) {
   const doCapture = useCallback(() => {
     if (!ready || capturingRef.current) return;
     capturingRef.current = true;
-    const file = videoRef.current && makePhotoFile(videoRef.current, zoom);
+    const file = videoRef.current && makePhotoFile(videoRef.current, zoom, facing === "user");
     if (!file) { capturingRef.current = false; return; }
     setCapturedFile(file);
     setPreviewUrl(URL.createObjectURL(file));
