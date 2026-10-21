@@ -1200,13 +1200,10 @@ export default function ChatPage() {
     window.open(targetUrl, "_blank", "noopener,noreferrer");
   };
 
-  const shareInvite = async () => {
-    const copied = await copyInviteLink();
+  const shareInvite = () => {
+    setLinkCopied(false);
     setShareDialogOpen(true);
-    if (copied) {
-      setTimeout(() => setLinkCopied(false), 2000);
-    }
-    };
+  };
 
   if (!VALID.test(room)) return null;
 
@@ -1490,7 +1487,7 @@ export default function ChatPage() {
               </div>
             </div>
 
-            <div className={`chat-compose shrink-0 transition-[padding] duration-200 ${sidebarOpen ? "lg:pl-[268px]" : ""}`}>
+            <div style={{ zIndex: 80 }} className={`chat-compose relative z-[80] shrink-0 transition-[padding] duration-200 ${sidebarOpen ? "lg:pl-[268px]" : ""}`}>
               <TypingIndicator typingUsers={typingUsers} />
               <InputBar
                 ref={inputBarRef}

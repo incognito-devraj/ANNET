@@ -81,11 +81,24 @@ const InputBar = forwardRef<InputBarHandle, Props>(function InputBar({
 
   useEffect(() => {
     if (!attachmentsOpen) return;
-    const closeOnOutsideInteraction = (event: globalThis.PointerEvent) => {
-      if (!composerRef.current?.contains(event.target as Node)) setAttachmentsOpen(false);
+    const isInsideComposer = (target: EventTarget | null) => composerRef.current?.contains(target as Node);
+    const closeOnOutsideInteraction = (event: globalThis.PointerEvent | globalThis.TouchEvent) => {
+      if (!isInsideComposer(event.target)) setAttachmentsOpen(false);
+    };
+    const closeOnChatScroll = () => setAttachmentsOpen(false);
+    const closeOnKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Tab") setAttachmentsOpen(false);
     };
     document.addEventListener("pointerdown", closeOnOutsideInteraction, true);
-    return () => document.removeEventListener("pointerdown", closeOnOutsideInteraction, true);
+    document.addEventListener("touchstart", closeOnOutsideInteraction, true);
+    document.addEventListener("scroll", closeOnChatScroll, true);
+    document.addEventListener("keydown", closeOnKeyboard, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsideInteraction, true);
+      document.removeEventListener("touchstart", closeOnOutsideInteraction, true);
+      document.removeEventListener("scroll", closeOnChatScroll, true);
+      document.removeEventListener("keydown", closeOnKeyboard, true);
+    };
   }, [attachmentsOpen]);
 
   const stageFile = (file: File) => {
@@ -322,6 +335,7 @@ const InputBar = forwardRef<InputBarHandle, Props>(function InputBar({
             type="button"
             variant="ghost"
             size="icon"
+            onPointerDown={(event) => event.preventDefault()}
             onClick={() => setAttachmentsOpen((open) => !open)}
             className="h-10 w-10 rounded-full border border-white/10 bg-white/[0.035] text-white/75 hover:text-white hover:bg-white/[0.08] transition-all shrink-0 self-end pb-0 mb-[8px]"
             aria-label={attachmentsOpen ? "Close attachments" : "Open attachments"}
