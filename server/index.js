@@ -6,7 +6,6 @@ const express = require("express");
 const cors = require("cors");
 const { Server } = require("socket.io");
 const { setupSocket } = require("./socket");
-const { setupAlbumApi } = require("./albums");
 
 const app = express();
 const server = http.createServer(app);
@@ -26,8 +25,8 @@ const corsOptions = {
       callback(new Error("Not allowed by CORS"));
     }
   },
-    methods: ["GET", "POST", "PUT", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Upload-Offset"],
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
 };
 
 const io = new Server(server, {
@@ -49,7 +48,6 @@ app.get("/health", (_req, res) => {
 });
 
 setupSocket(io);
-setupAlbumApi(app, io);
 
 const PORT = process.env.PORT || 3001;
 

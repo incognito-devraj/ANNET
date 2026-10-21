@@ -70,7 +70,8 @@ export function getSecurityReason(result: FileSecurityResult): string {
   return "";
 }
 
-const CHUNK_SIZE = 64 * 1024; // 64 KB
+const CHUNK_SIZE = 64 * 1024; // 64 KB payloads; small enough for mobile peers
+const FRAME_HEADER_SIZE = 12;
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: "stun:stun.l.google.com:19302" },
@@ -84,6 +85,16 @@ export type WebRTCCallbacks = {
   onComplete: (blob: Blob, fileName: string) => void;
   onError: (err: string) => void;
 };
+
+function makeFrame(sequence: number, offset: number, payload: ArrayBuffer): ArrayBuffer {
+  const frame = new ArrayBuffer(FRAME_HEADER_SIZE + payload.byteLength);
+  const view = new DataView(frame);
+  view.setUint32(0, sequence);
+  view.setUint32(4, offset);
+  view.setUint32(8, payload.byteLength);
+  new Uint8Array(frame, FRAME_HEADER_SIZE).set(new Uint8Array(payload));
+  return frame;
+}
 
 // ─── PeerSession ─────────────────────────────────────────────────────────────
 // Wraps RTCPeerConnection and handles ICE candidate queuing.
@@ -148,6 +159,7 @@ export async function createSenderPeer(
   dc.onopen = () => {
     const reader = new FileReader();
     let offset = 0;
+    let sequence = 0;
 
     const sendNextChunk = () => {
       if (offset >= file.size) return;
@@ -157,8 +169,9 @@ export async function createSenderPeer(
 
     reader.onload = (e) => {
       if (!e.target?.result) return;
-      dc.send(e.target.result as ArrayBuffer);
-      offset += CHUNK_SIZE;
+      const payload = e.target.result as ArrayBuffer;
+      dc.send(makeFrame(sequence++, offset, payload));
+      offset += payload.byteLength;
       sentAllChunks = offset >= file.size;
       callbacks.onProgress({
         transferred: Math.min(offset, file.size),
@@ -219,14 +232,35 @@ export async function createReceiverPeer(
   const pc = session.pc;
   const receivedChunks: ArrayBuffer[] = [];
   let receivedBytes = 0;
+  let expectedSequence = 0;
+  let expectedOffset = 0;
+  let completed = false;
 
   pc.ondatachannel = (e) => {
     const dc = e.channel;
 
     dc.onmessage = (ev) => {
-      const chunk = ev.data as ArrayBuffer;
+      if (completed) return;
+      const frame = ev.data instanceof ArrayBuffer ? ev.data : ev.data.buffer;
+      if (frame.byteLength < FRAME_HEADER_SIZE) {
+        callbacks.onError("Invalid transfer frame.");
+        pc.close();
+        return;
+      }
+      const header = new DataView(frame, 0, FRAME_HEADER_SIZE);
+      const sequence = header.getUint32(0);
+      const offset = header.getUint32(4);
+      const length = header.getUint32(8);
+      const chunk = frame.slice(FRAME_HEADER_SIZE);
+      if (sequence !== expectedSequence || offset !== expectedOffset || length !== chunk.byteLength || receivedBytes + length > fileMeta.size) {
+        callbacks.onError("Transfer integrity check failed.");
+        pc.close();
+        return;
+      }
+      expectedSequence += 1;
+      expectedOffset += length;
       receivedChunks.push(chunk);
-      receivedBytes += chunk.byteLength;
+      receivedBytes += length;
 
       callbacks.onProgress({
         transferred: receivedBytes,
@@ -240,6 +274,7 @@ export async function createReceiverPeer(
           pc.close();
           return;
         }
+        completed = true;
         const blob = new Blob(receivedChunks, { type: fileMeta.mimeType || "application/octet-stream" });
         callbacks.onComplete(blob, fileMeta.name);
         dc.close();

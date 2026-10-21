@@ -9,6 +9,13 @@ export type FileMeta = {
   mimeType?: string;
 };
 
+export type TransferGroup = {
+  id: string;
+  index: number;
+  total: number;
+  caption?: string;
+};
+
 export type AlbumAttachment = FileMeta & { id: string; url: string };
 export type Album = { id: string; author: string; caption?: string; ts: number; zipUrl?: string; attachments: AlbumAttachment[] };
 
@@ -51,6 +58,7 @@ export type ChatMessage =
       mine: boolean;
       fileMeta: FileMeta;
       offer: unknown;
+      transferGroup?: TransferGroup;
       received: boolean;
       ts: number;
       // Transfer state (receiver side)
@@ -66,6 +74,7 @@ export type ChatMessage =
       mine: boolean;
       dataUrl: string;
       fileMeta: FileMeta;
+      transferGroup?: TransferGroup;
       ts: number;
       replyTo?: ReplyTo;
     }

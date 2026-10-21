@@ -18,15 +18,12 @@ import MessageBubble from "@/components/chat/MessageBubble";
 import InputBar, { type InputBarHandle } from "@/components/chat/InputBar";
 import TypingIndicator from "@/components/chat/TypingIndicator";
 import CameraCapture from "@/components/chat/CameraCapture";
-import { ChatMessage, ChatUser, FileMeta, ReplyTo } from "@/types/chat";
-import { albumImageUrl, albumZipUrl, listAlbums, registerAlbumSession, uploadAlbum } from "@/lib/albums";
+import { ChatMessage, ChatUser, FileMeta, ReplyTo, TransferGroup } from "@/types/chat";
 
 
 const VALID = /^[A-Za-z0-9_]{1,24}$/;
 const JOIN_TIMEOUT_MS = 25000;
 const EMIT_ACK_TIMEOUT_MS = 15000;
-// Small media threshold: ≤ 5 MB → socket (fire-and-forget), > 5 MB → WebRTC P2P
-const MAX_SOCKET_MEDIA_SIZE = 5 * 1024 * 1024;
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -171,10 +168,9 @@ export default function ChatPage() {
   const nameRef = useRef(name);
   const roomRef = useRef(room);
   const peerRefs = useRef<Map<string, PeerSession>>(new Map());
-  const socketIdMap = useRef<Map<string, string | ((id: string) => void)>>(new Map());
-  const albumTokenRef = useRef<string | null>(null);
-  const albumReadyRef = useRef<Promise<void> | null>(null);
-  const albumUploadControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const socketIdMap = useRef<Map<string, string>>(new Map());
+  const outgoingTransfersRef = useRef<Map<string, { file: File; fileMeta: FileMeta; transferGroup?: TransferGroup }>>(new Map());
+  const acceptedTransfersRef = useRef<Set<string>>(new Set());
 
   const inviteUrl = `${window.location.origin}/${encodeURIComponent(room)}`;
 
@@ -345,7 +341,7 @@ export default function ChatPage() {
       }
     };
 
-    const onJoinSuccess = (payload: { users?: unknown; user?: { name?: string }; albumSessionToken?: string }) => {
+    const onJoinSuccess = (payload: { users?: unknown; user?: { name?: string } }) => {
       const assignedName = payload.user?.name;
       if (assignedName) {
         setName(assignedName);
@@ -360,15 +356,6 @@ export default function ChatPage() {
       setJoined(true);
       setNameError(null);
       setJoinStatus("Connected.");
-      if (payload.albumSessionToken) {
-        const token = payload.albumSessionToken;
-        albumTokenRef.current = token;
-        sessionStorage.setItem(`annet_album_token_${roomRef.current}`, token);
-        albumReadyRef.current = registerAlbumSession(roomRef.current, assignedName || nameRef.current, token).then(async () => {
-          const history = await listAlbums(roomRef.current, token);
-          setMessages((prev) => { const known = new Set(prev.map((message) => message.id)); return [...prev, ...history.filter((album) => !known.has(album.id)).map((album) => ({ kind: "album" as const, id: album.id, author: album.author, mine: album.author === (assignedName || nameRef.current), album: { ...album, zipUrl: albumZipUrl(roomRef.current, token, album.id), attachments: album.attachments.map((item) => ({ ...item, url: albumImageUrl(roomRef.current, token, album.id, item.id) })) }, ts: album.ts }))]; });
-        }).catch((error) => { albumReadyRef.current = null; toast.error(`Album storage unavailable: ${error instanceof Error ? error.message : "backend not reachable"}`); throw error; });
-      }
     };
 
     const onRoomUsers = (list: unknown) => {
@@ -421,40 +408,7 @@ export default function ChatPage() {
       ]);
     };
 
-    const onReceiveMedia = (payload: {
-      id: string;
-      author: string;
-      dataUrl: string;
-      fileMeta: FileMeta;
-      ts?: number;
-      replyTo?: ReplyTo;
-    }) => {
-      if (!tabFocused.current) setUnread((count) => count + 1);
-      playNotificationSound();
-      setMessages((prev) => [...prev, {
-        kind: "media",
-        id: payload.id,
-        author: payload.author,
-        mine: false,
-        dataUrl: payload.dataUrl,
-        fileMeta: payload.fileMeta,
-        ts: payload.ts ?? Date.now(),
-        replyTo: payload.replyTo,
-      }]);
-    };
-    const onAlbumCreated = (album: import("@/types/chat").Album) => {
-      const token = sessionStorage.getItem(`annet_album_token_${roomRef.current}`);
-      if (!token) return;
-      playNotificationSound();
-      setMessages((prev) => prev.some((message) => message.id === album.id) ? prev : [...prev, { kind: "album", id: album.id, author: album.author, mine: album.author === nameRef.current, album: { ...album, zipUrl: albumZipUrl(roomRef.current, token, album.id), attachments: album.attachments.map((item) => ({ ...item, url: albumImageUrl(roomRef.current, token, album.id, item.id) })) }, ts: album.ts }]);
-    };
-    const onWebrtcOffer = (payload: {
-      offer: RTCSessionDescriptionInit;
-      fileMeta: FileMeta;
-      msgId: string;
-      senderSocketId: string;
-      senderName?: string;
-    }) => {
+    const onFileOffer = (payload: { fileMeta: FileMeta; msgId: string; senderSocketId: string; senderName?: string; transferGroup?: TransferGroup }) => {
       const check = checkFileSecurity(payload.fileMeta.name, payload.fileMeta.size, payload.fileMeta.mimeType ?? "");
       if (!check.ok) {
         toast.error(`Blocked incoming file: ${getSecurityReason(check)}`);
@@ -468,11 +422,61 @@ export default function ChatPage() {
         author: payload.senderName ?? "peer",
         mine: false,
         fileMeta: payload.fileMeta,
-        offer: payload.offer,
+        offer: null,
+        transferGroup: payload.transferGroup,
         received: false,
         transferState: "idle",
         ts: Date.now(),
       }]);
+    };
+
+    const onWebrtcOffer = async (payload: { offer: RTCSessionDescriptionInit; fileMeta: FileMeta; msgId: string; senderSocketId: string; senderName?: string; transferGroup?: TransferGroup }) => {
+      if (!acceptedTransfersRef.current.has(payload.msgId)) return;
+      const key = `${payload.msgId}:${payload.senderSocketId}`;
+      try {
+        const { session, answer } = await createReceiverPeer(payload.offer, payload.fileMeta, (candidate) => socket.emit("ice_candidate", { candidate, msgId: payload.msgId, targetSocketId: payload.senderSocketId }), {
+          onProgress: ({ percent }) => setMessages((prev) => prev.map((entry) => entry.id === payload.msgId && entry.kind === "file_offer" ? { ...entry, transferState: "transferring", transferPercent: percent } : entry)),
+          onComplete: (blob) => {
+            setMessages((prev) => {
+              const updated = prev.map((entry) => entry.id === payload.msgId && entry.kind === "file_offer" ? { ...entry, transferState: "done" as const, transferPercent: 100, downloadBlob: blob } : entry);
+              const group = payload.transferGroup;
+              if (!group) {
+                if (payload.fileMeta.mimeType?.startsWith("image/")) {
+                  return [...updated.filter((entry) => entry.id !== payload.msgId), { kind: "media" as const, id: payload.msgId, author: payload.senderName ?? "peer", mine: false, dataUrl: URL.createObjectURL(blob), fileMeta: payload.fileMeta, ts: Date.now() }];
+                }
+                return updated;
+              }
+              const members = updated.filter((entry) => entry.kind === "file_offer" && entry.transferGroup?.id === group.id);
+              if (members.length < group.total || members.some((entry) => entry.kind !== "file_offer" || entry.transferState !== "done" || !entry.downloadBlob)) return updated;
+              const albumId = `p2p-album-${group.id}`;
+              const album = { id: albumId, author: payload.senderName ?? "peer", caption: group.caption, ts: Date.now(), attachments: members.sort((a, b) => (a.kind === "file_offer" ? a.transferGroup?.index ?? 0 : 0) - (b.kind === "file_offer" ? b.transferGroup?.index ?? 0 : 0)).map((entry) => ({ ...entry.fileMeta, id: entry.id, url: URL.createObjectURL(entry.downloadBlob!) })) };
+              return [...updated.filter((entry) => !(entry.kind === "file_offer" && entry.transferGroup?.id === group.id)), { kind: "album" as const, id: albumId, author: album.author, mine: false, album, ts: album.ts }];
+            });
+            peerRefs.current.get(key)?.close(); peerRefs.current.delete(key);
+          },
+          onError: (error) => {
+            setMessages((prev) => prev.map((entry) => entry.id === payload.msgId && entry.kind === "file_offer" ? { ...entry, transferState: "error", transferError: error } : entry));
+            peerRefs.current.get(key)?.close(); peerRefs.current.delete(key);
+          },
+        });
+        peerRefs.current.set(key, session);
+        socket.emit("webrtc_answer", { answer, msgId: payload.msgId, targetSocketId: payload.senderSocketId });
+      } catch (error) { console.error("[webrtc] receiver init failed", error); }
+    };
+
+    const onWebrtcRequest = async (payload: { msgId: string; receiverSocketId: string }) => {
+      const transfer = outgoingTransfersRef.current.get(payload.msgId);
+      if (!transfer) return;
+      const key = `${payload.msgId}:${payload.receiverSocketId}`;
+      try {
+        const { session, offer } = await createSenderPeer(transfer.file, (candidate) => socket.emit("ice_candidate", { candidate, msgId: payload.msgId, targetSocketId: payload.receiverSocketId }), {
+          onProgress: ({ percent }) => setMessages((prev) => prev.map((entry) => entry.id === payload.msgId && entry.kind === "file_offer" ? { ...entry, transferState: "transferring", transferPercent: percent } : entry)),
+          onComplete: () => { peerRefs.current.get(key)?.close(); peerRefs.current.delete(key); setMessages((prev) => prev.map((entry) => entry.id === payload.msgId && entry.kind === "file_offer" ? { ...entry, transferState: "done", transferPercent: 100 } : entry)); },
+          onError: (error) => setMessages((prev) => prev.map((entry) => entry.id === payload.msgId && entry.kind === "file_offer" ? { ...entry, transferState: "error", transferError: error } : entry)),
+        });
+        peerRefs.current.set(key, session);
+        socket.emit("webrtc_offer", { room: roomRef.current, targetSocketId: payload.receiverSocketId, offer, fileMeta: transfer.fileMeta, msgId: payload.msgId, transferGroup: transfer.transferGroup });
+      } catch (error) { console.error("[webrtc] sender init failed", error); }
     };
 
     const onWebrtcAnswer = async (payload: {
@@ -480,17 +484,8 @@ export default function ChatPage() {
       msgId: string;
       receiverSocketId?: string;
     }) => {
-      const session = peerRefs.current.get(payload.msgId);
+      const session = peerRefs.current.get(`${payload.msgId}:${payload.receiverSocketId ?? ""}`);
       if (!session) return;
-
-      if (payload.receiverSocketId) {
-        socketIdMap.current.set(`${payload.msgId}_receiver`, payload.receiverSocketId);
-        const flush = socketIdMap.current.get(`${payload.msgId}_flush`);
-        if (typeof flush === "function") {
-          flush(payload.receiverSocketId);
-          socketIdMap.current.delete(`${payload.msgId}_flush`);
-        }
-      }
 
       try {
         await session.setRemoteDescription(payload.answer);
@@ -499,8 +494,8 @@ export default function ChatPage() {
       }
     };
 
-    const onIceCandidate = async (payload: { candidate: RTCIceCandidateInit; msgId: string }) => {
-      const session = peerRefs.current.get(payload.msgId);
+    const onIceCandidate = async (payload: { candidate: RTCIceCandidateInit; msgId: string; fromSocketId: string }) => {
+      const session = peerRefs.current.get(`${payload.msgId}:${payload.fromSocketId}`);
       if (!session) return;
 
       try {
@@ -549,8 +544,8 @@ export default function ChatPage() {
     socket.on("user_joined", onUserJoined);
     socket.on("user_left", onUserLeft);
     socket.on("receive_message", onReceiveMessage);
-    socket.on("receive_media", onReceiveMedia);
-    socket.on("album_created", onAlbumCreated);
+    socket.on("file_offer", onFileOffer);
+    socket.on("webrtc_request", onWebrtcRequest);
     socket.on("webrtc_offer", onWebrtcOffer);
     socket.on("webrtc_answer", onWebrtcAnswer);
     socket.on("ice_candidate", onIceCandidate);
@@ -567,8 +562,8 @@ export default function ChatPage() {
       socket.off("user_joined", onUserJoined);
       socket.off("user_left", onUserLeft);
       socket.off("receive_message", onReceiveMessage);
-      socket.off("receive_media", onReceiveMedia);
-      socket.off("album_created", onAlbumCreated);
+      socket.off("file_offer", onFileOffer);
+      socket.off("webrtc_request", onWebrtcRequest);
       socket.off("webrtc_offer", onWebrtcOffer);
       socket.off("webrtc_answer", onWebrtcAnswer);
       socket.off("ice_candidate", onIceCandidate);
@@ -757,53 +752,32 @@ export default function ChatPage() {
 
     if (!ensureRoomReady()) return;
 
+    const msgId = uid();
+    outgoingTransfersRef.current.set(msgId, { file, fileMeta });
+    if (file.type.startsWith("image/")) {
+      setMessages((prev) => [...prev, { kind: "media", id: msgId, author: name, mine: true, dataUrl: URL.createObjectURL(file), fileMeta, ts: Date.now() }]);
+    } else {
+      setMessages((prev) => [...prev, { kind: "file_offer", id: msgId, author: name, mine: true, fileMeta, offer: null, received: false, transferState: "idle", transferPercent: 0, ts: Date.now() }]);
+    }
+    socket.emit("file_offer", { room, msgId, fileMeta });
+    setReplyTo(null);
+    return;
+
+    /* legacy single-peer/base64 implementation removed; all files use file_offer + P2P.
     // Every image, including a single photo, uses persistent HTTP storage.
     // Socket.IO is limited to the resulting album metadata notification.
-    if (file.type.startsWith("image/")) {
-      await handleAlbum([file]);
-      return;
-    }
-
-    const isSmallMedia =
-      file.size <= MAX_SOCKET_MEDIA_SIZE &&
-      (file.type.startsWith("image/") || file.type.startsWith("video/") || file.type.startsWith("audio/"));
+    const isSmallMedia = false;
 
     // ── Small media path: ≤ 5 MB image / video / audio → socket, fire-and-forget
     if (isSmallMedia) {
-      const msgId = uid();
-      const ts = Date.now();
-      const currentReplyTo = replyTo ?? undefined;
 
       // Read as data URL — only error we surface is a FileReader failure
-      let dataUrl: string;
-      try {
-        dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = () => reject(new Error("Failed to read file"));
-          reader.readAsDataURL(file);
-        });
-      } catch {
-        toast.error("Could not read the file.");
-        return;
-      }
-
-      // Render instantly on sender's screen
-      setMessages((prev) => [...prev, {
-        kind: "media",
-        id: msgId,
-        author: name,
-        mine: true,
-        dataUrl,
-        fileMeta,
-        ts,
-        replyTo: currentReplyTo,
-      }]);
-      setReplyTo(null);
-
-      // Fire-and-forget — no ack, no timeout, no retry
-      socket.emit("send_media", { id: msgId, room, author: name, dataUrl, fileMeta, ts, replyTo: currentReplyTo });
       return;
+
+      return;
+      //
+      // Fire-and-forget — no ack, no timeout, no retry
+      // legacy transport removed
     }
 
     // ── Large file path: > 5 MB or non-media → WebRTC P2P ───────────────────
@@ -873,12 +847,28 @@ export default function ChatPage() {
       toast.error("Failed to initiate file transfer.");
       console.error("[webrtc] sender init failed", error);
     }
+    */
   };
 
   const handleAlbum = async (files: File[], caption = "") => {
     if (!ensureRoomReady()) return;
     const valid = files.filter((file) => file.type.startsWith("image/"));
     if (!valid.length) { toast.error("Choose one or more images."); return; }
+    const groupId = uid();
+    const albumId = `p2p-album-${groupId}`;
+    const albumAttachments = valid.map((file) => ({ id: uid(), name: file.name, size: file.size, mimeType: file.type, url: URL.createObjectURL(file) }));
+    setMessages((prev) => [...prev, { kind: "album" as const, id: albumId, author: nameRef.current, mine: true, ts: Date.now(), album: { id: albumId, author: nameRef.current, caption, ts: Date.now(), attachments: albumAttachments } }]);
+    valid.forEach((file, index) => {
+      const msgId = uid();
+      const fileMeta: FileMeta = { name: file.name, size: file.size, mimeType: file.type };
+      const transferGroup: TransferGroup = { id: groupId, index, total: valid.length, caption };
+      outgoingTransfersRef.current.set(msgId, { file, fileMeta, transferGroup });
+      socket.emit("file_offer", { room, msgId, fileMeta, transferGroup });
+    });
+    return;
+
+    /* legacy HTTP album uploader removed: P2P metadata is sent above.
+
     if (albumReadyRef.current) {
       try { await albumReadyRef.current; } catch { return; }
     }
@@ -903,6 +893,7 @@ export default function ChatPage() {
     } finally {
       albumUploadControllersRef.current.delete(placeholderId);
     }
+    */
   };
 
   const closeCamera = useCallback((afterCapture = false) => {
@@ -1073,6 +1064,15 @@ export default function ChatPage() {
     if (!msg || msg.kind !== "file_offer" || msg.mine) return;
 
     const targetSocketId = socketIdMap.current.get(msgId);
+    if (!targetSocketId) return;
+    acceptedTransfersRef.current.add(msgId);
+    setMessages((prev) => prev.map((entry) => entry.id === msgId && entry.kind === "file_offer" ? { ...entry, received: true, transferState: "connecting", transferPercent: 0 } : entry));
+    socket.emit("webrtc_request", { room, msgId, targetSocketId });
+    return;
+
+    /* legacy eager receiver path removed; the sender creates a targeted offer after this request.
+
+    const legacyTargetSocketId = socketIdMap.current.get(msgId);
     if (typeof targetSocketId !== "string") return;
 
     const updateMessage = (patch: Partial<Extract<ChatMessage, { kind: "file_offer" }>>) => {
@@ -1114,6 +1114,7 @@ export default function ChatPage() {
       toast.error("Failed to accept file transfer.");
       console.error("[webrtc] receiver init failed", error);
     }
+    */
     };
 
   const handleDownloadFile = useCallback((msgId: string) => {

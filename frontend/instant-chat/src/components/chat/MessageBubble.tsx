@@ -9,7 +9,8 @@ import {
   FileIcon, Reply, X, ZoomIn,
 } from "lucide-react";
 import type { Album } from "@/types/chat";
-import { albumImageDownloadUrl } from "@/lib/albums";
+import { createZipFromFiles } from "@/lib/archive";
+import { triggerDownload } from "@/lib/webrtc";
 
 function formatSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -389,8 +390,26 @@ function AlbumViewer({ album, index, onClose, onChange }: { album: Album; index:
     window.addEventListener("keydown", key); document.body.style.overflow = "hidden";
     return () => { window.removeEventListener("keydown", key); document.body.style.overflow = ""; };
   }, [album.attachments.length, index, onChange, onClose]);
-  const downloadUrl = albumImageDownloadUrl(item.url);
-  const markDownloaded = () => setDownloadState("downloaded");
+  const downloadUrl = item.url;
+  const downloadPhoto = async () => {
+    try {
+      const response = await fetch(downloadUrl);
+      const blob = await response.blob();
+      triggerDownload(blob, item.name);
+      setDownloadState("downloaded");
+    } catch { setDownloadState("idle"); }
+  };
+  const downloadAll = async () => {
+    try {
+      const files = await Promise.all(album.attachments.map(async (attachment) => {
+        const response = await fetch(attachment.url);
+        const blob = await response.blob();
+        return new File([blob], attachment.name, { type: attachment.mimeType || blob.type });
+      }));
+      const zip = await createZipFromFiles(files);
+      triggerDownload(zip, `${album.author || "annet"}-photos.zip`);
+    } catch { setDownloadState("idle"); }
+  };
   const closeViewer = () => { if (window.history.state?.annetAlbumViewer) window.history.back(); else onClose(); };
   const finishSwipe = (clientX: number) => {
     if (startX.current === null) return;
@@ -398,7 +417,7 @@ function AlbumViewer({ album, index, onClose, onChange }: { album: Album; index:
     startX.current = null; pointerId.current = null; setDragX(0);
     if (Math.abs(delta) > 45) onChange(Math.max(0, Math.min(album.attachments.length - 1, index + (delta < 0 ? 1 : -1))));
   };
-  return <div data-album-viewer="true" className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#090e12] text-white" style={{ touchAction: "pan-y" }} onPointerDown={(event) => { if (event.pointerType === "mouse" && event.button !== 0) return; pointerId.current = event.pointerId; startX.current = event.clientX; event.currentTarget.setPointerCapture?.(event.pointerId); setDragX(0); }} onPointerMove={(event) => { if (pointerId.current === event.pointerId && startX.current !== null) setDragX(event.clientX - startX.current); }} onPointerUp={(event) => { if (pointerId.current === event.pointerId) finishSwipe(event.clientX); }} onPointerCancel={() => { pointerId.current = null; startX.current = null; setDragX(0); }}>
+  return <div data-album-viewer="true" className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-[#090e12] text-white" style={{ touchAction: "pan-y" }} onPointerDown={(event) => { if ((event.target as HTMLElement).closest("button,a")) return; if (event.pointerType === "mouse" && event.button !== 0) return; pointerId.current = event.pointerId; startX.current = event.clientX; event.currentTarget.setPointerCapture?.(event.pointerId); setDragX(0); }} onPointerMove={(event) => { if (pointerId.current === event.pointerId && startX.current !== null) setDragX(event.clientX - startX.current); }} onPointerUp={(event) => { if (pointerId.current === event.pointerId) finishSwipe(event.clientX); }} onPointerCancel={() => { pointerId.current = null; startX.current = null; setDragX(0); }}>
     <style>{`@keyframes album-slide-next { from { transform: translateX(12%); opacity: .35; } to { transform: translateX(0); opacity: 1; } } @keyframes album-slide-previous { from { transform: translateX(-12%); opacity: .35; } to { transform: translateX(0); opacity: 1; } }`}</style>
     <img src={item.url} alt="" aria-hidden className="pointer-events-none absolute inset-0 h-full w-full scale-110 object-cover opacity-20 blur-3xl" />
     <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(7,14,19,.45),rgba(3,7,10,.94)_78%)]" />
@@ -409,7 +428,7 @@ function AlbumViewer({ album, index, onClose, onChange }: { album: Album; index:
     </div>
     <div className="relative z-10 flex min-h-0 flex-1 items-center justify-center px-10 py-2 sm:px-16"><button type="button" disabled={index === 0} onClick={() => onChange(index - 1)} className="absolute left-2 z-10 px-2 text-4xl font-light leading-none text-white/70 transition-opacity hover:text-white disabled:opacity-15 sm:left-6" aria-label="Previous photo">‹</button><img key={item.id} src={item.url} alt={item.name} onDoubleClick={() => setZoom((value) => value === 1 ? 2 : 1)} onWheel={(event) => { event.preventDefault(); setZoom((value) => Math.max(1, Math.min(3, value + (event.deltaY < 0 ? 0.2 : -0.2)))); }} className="max-h-[58vh] max-w-[min(88vw,1100px)] select-none object-contain transition-transform duration-200 sm:max-h-[64vh]" style={{ transform: `translateX(${dragX}px) scale(${zoom})`, opacity: Math.max(0.65, 1 - Math.abs(dragX) / 500), animation: `album-slide-${slideDirection} 240ms cubic-bezier(.22,.61,.36,1)` }} draggable={false} /><button type="button" disabled={index === album.attachments.length - 1} onClick={() => onChange(index + 1)} className="absolute right-2 z-10 px-2 text-4xl font-light leading-none text-white/70 transition-opacity hover:text-white disabled:opacity-15 sm:right-6" aria-label="Next photo">›</button></div>
     <div ref={thumbnailRailRef} className="relative z-10 mx-auto w-full max-w-5xl px-4 pb-2 sm:px-8"><div className="flex gap-2 overflow-x-auto pb-2 scrollbar-thin">{album.attachments.map((attachment, attachmentIndex) => <button data-thumbnail-index={attachmentIndex} key={attachment.id} type="button" onClick={() => onChange(attachmentIndex)} className={`h-14 w-16 shrink-0 overflow-hidden rounded-lg border-2 transition-all sm:h-16 sm:w-20 ${attachmentIndex === index ? "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/.18)]" : "border-white/15 opacity-60 hover:opacity-100"}`} aria-label={`View photo ${attachmentIndex + 1}`}><img src={attachment.url} alt="" loading="lazy" className="h-full w-full object-cover" /></button>)}</div></div>
-    <div className="relative z-10 mx-auto mb-[max(.75rem,env(safe-area-inset-bottom))] flex w-[calc(100%-2rem)] max-w-2xl justify-center rounded-2xl border border-white/15 bg-[#111820]/90 p-2 shadow-[0_12px_40px_rgba(0,0,0,.5)] backdrop-blur-xl sm:mb-5 sm:p-3"><a href={album.zipUrl || "#"} download className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/20 px-3 py-3 text-sm font-medium text-white/80 hover:bg-white/10">Download all</a><div className="mx-2 w-px bg-white/10" /><a href={downloadUrl} download onClick={markDownloaded} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-3 py-3 text-sm font-semibold text-primary-foreground">{downloadState === "downloaded" ? "Downloaded" : "Download this photo"}</a></div>
+    <div className="relative z-10 mx-auto mb-[max(.75rem,env(safe-area-inset-bottom))] flex w-[calc(100%-2rem)] max-w-2xl justify-center rounded-2xl border border-white/15 bg-[#111820]/90 p-2 shadow-[0_12px_40px_rgba(0,0,0,.5)] backdrop-blur-xl sm:mb-5 sm:p-3"><button type="button" onClick={downloadAll} className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-white/20 px-3 py-3 text-sm font-medium text-white/80 hover:bg-white/10">Download all</button><div className="mx-2 w-px bg-white/10" /><button type="button" onClick={downloadPhoto} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-3 py-3 text-sm font-semibold text-primary-foreground">{downloadState === "downloaded" ? "Downloaded" : "Download this photo"}</button></div>
   </div>;
 }
 

@@ -4,19 +4,23 @@
  */
 
 const { addUser, removeUser, getUser, getUsersInRoom } = require("./utils/users");
+const MAX_FILE_SIZE = 500 * 1024 * 1024;
+
+function validFileMeta(fileMeta) {
+  return Boolean(fileMeta && typeof fileMeta.name === "string" && fileMeta.name.length > 0 && fileMeta.name.length <= 255 && Number.isSafeInteger(fileMeta.size) && fileMeta.size >= 0 && fileMeta.size <= MAX_FILE_SIZE && (fileMeta.mimeType === undefined || typeof fileMeta.mimeType === "string"));
+}
 
 function setupSocket(io) {
+  const offers = new Map();
   io.on("connection", (socket) => {
     socket.on("join_room", ({ name, room }) => {
       const existing = getUser(socket.id);
-      const albumSessionToken = socket.data.albumSessionToken || Buffer.from(`${socket.id}:${Date.now()}:${Math.random()}`).toString("base64url");
-      socket.data.albumSessionToken = albumSessionToken;
       // Socket.IO may replay a join after a transient reconnect. Treat an
       // identical join as idempotent so it cannot create phantom leave/join
       // notifications or replace the member with a new anonymous name.
       if (existing && existing.room === room && existing.name === name) {
         socket.join(room);
-        socket.emit("join_success", { room, user: existing, users: getUsersInRoom(room), albumSessionToken });
+        socket.emit("join_success", { room, user: existing, users: getUsersInRoom(room) });
         io.to(room).emit("room_users", getUsersInRoom(room));
         return;
       }
@@ -33,7 +37,6 @@ function setupSocket(io) {
         room,
         user: result,
         users: getUsersInRoom(room),
-        albumSessionToken,
       });
 
       // Broadcast only to peers to avoid duplicate self-join system messages.
@@ -63,34 +66,45 @@ function setupSocket(io) {
       ack?.({ ok: true });
     });
 
-    socket.on("send_media", ({ id, room, author, dataUrl, fileMeta, ts, replyTo }, ack) => {
-      socket.to(room).emit("receive_media", {
-        id,
-        room,
-        author,
-        dataUrl,
+    socket.on("file_offer", ({ room, msgId, fileMeta, transferGroup }) => {
+      const user = getUser(socket.id);
+      if (!user || user.room !== room || !msgId || !validFileMeta(fileMeta)) return;
+      offers.set(msgId, { room, senderSocketId: socket.id, fileMeta });
+      socket.to(room).emit("file_offer", {
+        msgId,
         fileMeta,
-        ts,
-        replyTo,
+        transferGroup,
+        senderSocketId: socket.id,
+        senderName: user.name,
       });
-      ack?.({ ok: true });
     });
 
-    socket.on("webrtc_offer", ({ room, offer, fileMeta, msgId, senderName }) => {
-      // Prefer the server-side user record over the client-supplied name
-      // so the displayed author is always authoritative.
-      const user = getUser(socket.id);
-      const authorName = user?.name ?? senderName ?? "peer";
-      socket.to(room).emit("webrtc_offer", {
+
+    socket.on("webrtc_request", ({ room, msgId, targetSocketId }) => {
+      const requester = getUser(socket.id);
+      const target = getUser(targetSocketId);
+      const offer = offers.get(msgId);
+      if (!requester || !target || !offer || offer.room !== room || offer.senderSocketId !== targetSocketId || requester.room !== room || target.room !== room) return;
+      io.to(targetSocketId).emit("webrtc_request", { room, msgId, receiverSocketId: socket.id });
+    });
+
+    socket.on("webrtc_offer", ({ room, targetSocketId, offer, fileMeta, msgId, transferGroup }) => {
+      const sender = getUser(socket.id);
+      const receiver = getUser(targetSocketId);
+      const offerRecord = offers.get(msgId);
+      if (!sender || !receiver || !offerRecord || offerRecord.senderSocketId !== socket.id || offerRecord.room !== room || receiver.room !== room || sender.room !== room || !validFileMeta(fileMeta) || offerRecord.fileMeta.name !== fileMeta.name || offerRecord.fileMeta.size !== fileMeta.size || offerRecord.fileMeta.mimeType !== fileMeta.mimeType) return;
+      io.to(targetSocketId).emit("webrtc_offer", {
         offer,
         fileMeta,
+        transferGroup,
         msgId,
         senderSocketId: socket.id,
-        senderName: authorName,
+        senderName: sender.name,
       });
     });
 
     socket.on("webrtc_answer", ({ answer, msgId, targetSocketId }) => {
+      if (!getUser(socket.id) || !getUser(targetSocketId) || getUser(socket.id).room !== getUser(targetSocketId).room) return;
       io.to(targetSocketId).emit("webrtc_answer", {
         answer,
         msgId,
@@ -99,7 +113,8 @@ function setupSocket(io) {
     });
 
     socket.on("ice_candidate", ({ candidate, msgId, targetSocketId }) => {
-      io.to(targetSocketId).emit("ice_candidate", { candidate, msgId });
+      if (!getUser(socket.id) || !getUser(targetSocketId) || getUser(socket.id).room !== getUser(targetSocketId).room) return;
+      io.to(targetSocketId).emit("ice_candidate", { candidate, msgId, fromSocketId: socket.id });
     });
 
     // Keep typing indicators untouched.
@@ -112,6 +127,7 @@ function setupSocket(io) {
     });
 
     socket.on("disconnect", () => {
+      for (const [msgId, offer] of offers) if (offer.senderSocketId === socket.id) offers.delete(msgId);
       const user = removeUser(socket.id);
       if (!user) return;
 
