@@ -416,6 +416,7 @@ export default function ChatPage() {
       }
 
       socketIdMap.current.set(payload.msgId, payload.senderSocketId);
+      const isImage = payload.fileMeta.mimeType?.startsWith("image/") || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(payload.fileMeta.name);
       setMessages((prev) => [...prev, {
         kind: "file_offer",
         id: payload.msgId,
@@ -424,10 +425,14 @@ export default function ChatPage() {
         fileMeta: payload.fileMeta,
         offer: null,
         transferGroup: payload.transferGroup,
-        received: false,
-        transferState: "idle",
+        received: isImage,
+        transferState: isImage ? "connecting" : "idle",
         ts: Date.now(),
       }]);
+      if (isImage) {
+        acceptedTransfersRef.current.add(payload.msgId);
+        socket.emit("webrtc_request", { room: roomRef.current, msgId: payload.msgId, targetSocketId: payload.senderSocketId });
+      }
     };
 
     const onWebrtcOffer = async (payload: { offer: RTCSessionDescriptionInit; fileMeta: FileMeta; msgId: string; senderSocketId: string; senderName?: string; transferGroup?: TransferGroup }) => {

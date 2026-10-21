@@ -335,6 +335,19 @@ function SharedReplyPreview({ msg }: { msg: Extract<ChatMessage, { replyTo?: unk
 }
 
 function AlbumBubble({ album, onOpen }: { album: Album; onOpen: (index: number) => void }) {
+  const downloadAll = async () => {
+    try {
+      const files = await Promise.all(album.attachments.map(async (attachment) => {
+        const response = await fetch(attachment.url);
+        const blob = await response.blob();
+        return new File([blob], attachment.name, { type: attachment.mimeType || blob.type });
+      }));
+      const zip = await createZipFromFiles(files);
+      triggerDownload(zip, `${album.author || "annet"}-photos.zip`);
+    } catch {
+      // The viewer also exposes the same action if a browser blocks a direct download.
+    }
+  };
   const visible = album.attachments.slice(0, 4);
   if (album.attachments.length === 1) {
     const photo = album.attachments[0];
@@ -351,7 +364,7 @@ function AlbumBubble({ album, onOpen }: { album: Album; onOpen: (index: number) 
       {visible.map((item, index) => <button key={item.id} type="button" onClick={() => onOpen(index)} className="relative aspect-square overflow-hidden bg-black/30"><img src={item.url} loading="lazy" alt={item.name} className="h-full w-full object-cover transition-transform hover:scale-105" />{index === 3 && album.attachments.length > 4 && <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-xl font-semibold text-white">+{album.attachments.length - 4}</span>}</button>)}
     </div>
     {album.caption && <p className="mt-2 text-sm text-white/80">{album.caption}</p>}
-    <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/10 pt-3"><span className="text-[11px] text-white/45">{album.attachments.length} original {album.attachments.length === 1 ? "photo" : "photos"}</span><span className="flex gap-2"><a href={album.zipUrl || "#"} download className="rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20">Download all</a><button type="button" onClick={() => onOpen(0)} className="rounded-xl bg-primary px-3 py-2 text-[11px] font-semibold text-primary-foreground transition-transform hover:scale-[1.02]">View photos</button></span></div>
+    <div className="mt-3 flex items-center justify-between gap-2 border-t border-white/10 pt-3"><span className="text-[11px] text-white/45">{album.attachments.length} original {album.attachments.length === 1 ? "photo" : "photos"}</span><span className="flex gap-2"><button type="button" onClick={downloadAll} className="rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary transition-colors hover:bg-primary/20">Download all</button><button type="button" onClick={() => onOpen(0)} className="rounded-xl bg-primary px-3 py-2 text-[11px] font-semibold text-primary-foreground transition-transform hover:scale-[1.02]">View photos</button></span></div>
   </div>;
 }
 
