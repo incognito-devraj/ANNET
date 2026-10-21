@@ -3,22 +3,23 @@ import { Camera, RefreshCw } from "lucide-react";
 
 type Props = {
   onCapture: (file: File) => void;
-  onClose: () => void;
 };
 
 const MAX_CAPTURE_EDGE = 1600;
 // Pointer must drift less than this to count as a tap on the viewfinder
 const TAP_THRESHOLD_PX = 12;
-// Swipe button must travel this far vertically to flip camera
-const FLIP_THRESHOLD_PX = 48;
 
-function makePhotoFile(video: HTMLVideoElement): File | null {
+function makePhotoFile(video: HTMLVideoElement, zoom = 1): File | null {
   if (!video.videoWidth || !video.videoHeight) return null;
   const scale = Math.min(1, MAX_CAPTURE_EDGE / Math.max(video.videoWidth, video.videoHeight));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
   canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-  canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+  const sourceWidth = video.videoWidth / zoom;
+  const sourceHeight = video.videoHeight / zoom;
+  const sourceX = (video.videoWidth - sourceWidth) / 2;
+  const sourceY = (video.videoHeight - sourceHeight) / 2;
+  canvas.getContext("2d")?.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
   const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
   const bytes = atob(dataUrl.split(",")[1]);
   const buf = new Uint8Array(bytes.length);
@@ -28,7 +29,7 @@ function makePhotoFile(video: HTMLVideoElement): File | null {
 
 type FacingMode = "environment" | "user";
 
-export default function CameraCapture({ onCapture, onClose }: Props) {
+export default function CameraCapture({ onCapture }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,18 +37,19 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
   const [flash, setFlash] = useState(false);
   const [flipping, setFlipping] = useState(false);
   const [facing, setFacing] = useState<FacingMode>("environment");
+  const [zoom, setZoom] = useState(1);
+  const maxZoom = 3;
+  const activeDeviceIdRef = useRef<string | null>(null);
   const capturingRef = useRef(false);
 
   // Viewfinder tap tracking
   const viewDownPos = useRef<{ x: number; y: number } | null>(null);
-
-  // Swipe button drag tracking
-  const [swipeDy, setSwipeDy] = useState(0);
-  const swipeDownY = useRef<number | null>(null);
-  const swipeDyRef = useRef(0);
+  const touchPoints = useRef(new Map<number, { x: number; y: number }>());
+  const pinchStartDistance = useRef<number | null>(null);
+  const pinchStartZoom = useRef(1);
 
   // ── Start stream with given facing mode ────────────────────────────────
-  const startStream = useCallback(async (mode: FacingMode) => {
+  const startStream = useCallback(async (mode: FacingMode, deviceId?: string) => {
     // Stop any existing stream first
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -60,11 +62,17 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
     }
 
     try {
+      const videoConstraints: MediaTrackConstraints = deviceId
+        ? { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } }
+        : { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } };
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: mode }, width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: videoConstraints,
         audio: false,
       });
       streamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      activeDeviceIdRef.current = track?.getSettings?.().deviceId ?? deviceId ?? null;
+      setZoom(1);
       if (videoRef.current) videoRef.current.srcObject = stream;
     } catch {
       setError("Camera access was denied or is unavailable.");
@@ -89,20 +97,31 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
     if (flipping) return;
     setFlipping(true);
     const next: FacingMode = facing === "environment" ? "user" : "environment";
-    setFacing(next);
-    await startStream(next);
-    setFlipping(false);
+    try {
+      const devices = (await navigator.mediaDevices.enumerateDevices())
+        .filter((device) => device.kind === "videoinput");
+      const nextDevice = devices.find((device) => device.deviceId !== activeDeviceIdRef.current);
+      await startStream(next, nextDevice?.deviceId);
+      setFacing(next);
+    } finally {
+      setFlipping(false);
+    }
   }, [facing, flipping, startStream]);
+
+  const changeZoom = useCallback((nextZoom: number) => {
+    const value = Math.max(1, Math.min(maxZoom, nextZoom));
+    setZoom(value);
+  }, [maxZoom]);
 
   const doCapture = useCallback(() => {
     if (!ready || capturingRef.current) return;
     capturingRef.current = true;
-    const file = videoRef.current && makePhotoFile(videoRef.current);
+    const file = videoRef.current && makePhotoFile(videoRef.current, zoom);
     if (!file) { capturingRef.current = false; return; }
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
     setTimeout(() => onCapture(file), 120);
-  }, [ready, onCapture]);
+  }, [ready, onCapture, zoom]);
 
   // ── Viewfinder: record down, capture on up if small drift ──────────────
   const onViewDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
@@ -112,6 +131,10 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
 
   const onViewUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if ((e.target as HTMLElement).closest("[data-cam-btn]")) return;
+    if (pinchStartDistance.current !== null) {
+      viewDownPos.current = null;
+      return;
+    }
     const down = viewDownPos.current;
     viewDownPos.current = null;
     if (!down) return;
@@ -122,58 +145,44 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
 
   const onViewCancel = useCallback(() => { viewDownPos.current = null; }, []);
 
-  // ── Swipe button: drag to flip, tap to capture ─────────────────────────
-  const onBtnDown = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    e.currentTarget.setPointerCapture(e.pointerId);
-    swipeDownY.current = e.clientY;
-    swipeDyRef.current = 0;
-    setSwipeDy(0);
-  };
-
-  const onBtnMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (swipeDownY.current === null) return;
-    const dy = e.clientY - swipeDownY.current;
-    swipeDyRef.current = dy;
-    setSwipeDy(dy);
-  };
-
-  const onBtnUp = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    const dy = swipeDyRef.current;
-    swipeDownY.current = null;
-    swipeDyRef.current = 0;
-    setSwipeDy(0);
-
-    if (Math.abs(dy) >= FLIP_THRESHOLD_PX) {
-      // Swiped far enough → flip camera
-      void flipCamera();
-    } else {
-      // Short tap → capture
-      doCapture();
+  const onViewPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    onViewDown(event);
+    if (event.pointerType !== "touch") return;
+    touchPoints.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (touchPoints.current.size === 2) {
+      const points = [...touchPoints.current.values()];
+      pinchStartDistance.current = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      pinchStartZoom.current = zoom;
     }
-  };
+  }, [onViewDown, zoom]);
 
-  const onBtnCancel = (e: React.PointerEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    swipeDownY.current = null;
-    swipeDyRef.current = 0;
-    setSwipeDy(0);
-  };
+  const onViewPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== "touch" || !touchPoints.current.has(event.pointerId)) return;
+    touchPoints.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (touchPoints.current.size === 2 && pinchStartDistance.current) {
+      const points = [...touchPoints.current.values()];
+      const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+      changeZoom(pinchStartZoom.current * (distance / pinchStartDistance.current));
+    }
+  }, [changeZoom]);
 
-  const clampedDy = Math.max(-72, Math.min(72, swipeDy));
-  const isDragging = swipeDownY.current !== null;
+  const onViewPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    onViewUp(event);
+    touchPoints.current.delete(event.pointerId);
+    if (touchPoints.current.size < 2) pinchStartDistance.current = null;
+  }, [onViewUp]);
 
   return (
     <div
-      className="fixed inset-0 z-[100] bg-black touch-none select-none"
+      data-camera-overlay="true"
+      className="fixed inset-0 z-[100] overflow-hidden bg-[#03090c] text-white touch-none select-none"
       role="dialog"
       aria-modal="true"
       aria-label="Camera"
-      onPointerDown={onViewDown}
-      onPointerUp={onViewUp}
-      onPointerCancel={onViewCancel}
+      onPointerDown={onViewPointerDown}
+      onPointerMove={onViewPointerMove}
+      onPointerUp={onViewPointerUp}
+      onPointerCancel={(event) => { onViewCancel(); touchPoints.current.delete(event.pointerId); pinchStartDistance.current = null; }}
     >
       {/* Live viewfinder */}
       <video
@@ -185,7 +194,7 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
         className="h-full w-full object-cover"
         style={{
           // Mirror front camera so it feels natural
-          transform: facing === "user" ? "scaleX(-1)" : "none",
+          transform: `${facing === "user" ? "scaleX(-1)" : "none"} scale(${zoom})`,
           transition: "opacity 0.2s",
           opacity: flipping ? 0 : 1,
         }}
@@ -198,40 +207,37 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
         style={{ opacity: flash ? 0.75 : 0 }}
       />
 
+      {/* ANNET camera header and dedicated camera switch */}
+      <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 bg-gradient-to-b from-black/75 to-transparent px-4 pb-8 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8">
+        <div className="flex items-center gap-2">
+          <button type="button" data-cam-btn onClick={() => void flipCamera()} disabled={flipping || !!error} className="flex h-10 items-center gap-2 rounded-full border border-primary/30 bg-[#071317]/75 px-3 text-xs font-medium text-primary shadow-[0_0_22px_rgba(0,220,190,.12)] backdrop-blur-xl transition-colors hover:bg-primary/15 disabled:opacity-50" aria-label="Switch camera"><RefreshCw className={`h-4 w-4 ${flipping ? "animate-spin" : ""}`} /><span className="hidden sm:inline">Switch camera</span></button>
+        </div>
+      </div>
+
       {/* Top hint */}
-      <div className="camera-snap-ui pointer-events-none absolute inset-x-0 top-0 flex items-center p-4 pt-[max(1rem,env(safe-area-inset-top))]">
+      <div className="camera-snap-ui pointer-events-none absolute inset-x-0 top-0 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <span className="camera-snap-hint rounded-full px-3 py-1.5 text-xs">
           {error
             ? error
             : ready
-              ? "Tap to capture · swipe button to flip camera"
+              ? "Tap anywhere to click and send"
               : "Starting camera…"}
         </span>
       </div>
 
-      {/*
-        Bottom button — dual purpose:
-          Tap  → capture photo
-          Swipe up or down ≥ 48px → flip front/back camera
-        The button visually follows the finger for tactile feedback.
-      */}
+      {/* Desktop-only zoom slider; mobile keeps the preview clean and gesture-driven. */}
+      <label data-cam-btn className="absolute bottom-[max(7rem,calc(env(safe-area-inset-bottom)+6rem))] left-4 z-20 hidden items-center gap-3 rounded-full border border-white/15 bg-[#071317]/75 px-4 py-2 text-[11px] text-primary backdrop-blur-xl sm:flex sm:left-8">
+        <span>Zoom</span><input type="range" min="1" max={maxZoom} step="0.05" value={zoom} onChange={(event) => changeZoom(Number(event.target.value))} className="w-36 accent-primary" aria-label="Camera zoom" /><span className="w-10 text-right">{Math.round(zoom * 100)}%</span>
+      </label>
+
       <div
         data-cam-btn
-        onPointerDown={onBtnDown}
-        onPointerMove={onBtnMove}
-        onPointerUp={onBtnUp}
-        onPointerCancel={onBtnCancel}
-        className="absolute left-1/2 flex flex-col items-center gap-1.5 cursor-pointer z-10"
-        style={{
-          bottom: "max(1.75rem, env(safe-area-inset-bottom))",
-          transform: `translateX(-50%) translateY(${clampedDy}px)`,
-          transition: isDragging ? "none" : "transform 0.22s ease",
-        }}
-        aria-label="Tap to capture or swipe to flip camera"
+        onPointerDown={(event) => event.stopPropagation()}
+        onPointerUp={(event) => { event.stopPropagation(); doCapture(); }}
+        className="absolute left-1/2 z-10 flex -translate-x-1/2 cursor-pointer flex-col items-center gap-1.5"
+        style={{ bottom: "max(1.75rem, env(safe-area-inset-bottom))" }}
+        aria-label="Tap to capture and send"
       >
-        {/* Drag handle pill */}
-        <div className="w-8 h-1 rounded-full bg-white/35" aria-hidden />
-
         {/* Camera ring */}
         {error ? (
           <span className="text-sm text-red-300 bg-black/60 backdrop-blur-sm rounded-full px-4 py-2">
@@ -249,9 +255,6 @@ export default function CameraCapture({ onCapture, onClose }: Props) {
           </div>
         )}
 
-        <span className="text-[10px] text-white/35 tracking-wide pointer-events-none">
-          {flipping ? "switching…" : facing === "user" ? "front cam" : "swipe to flip"}
-        </span>
       </div>
 
       {/* Readiness pulse */}
