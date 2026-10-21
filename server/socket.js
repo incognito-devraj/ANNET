@@ -9,12 +9,14 @@ function setupSocket(io) {
   io.on("connection", (socket) => {
     socket.on("join_room", ({ name, room }) => {
       const existing = getUser(socket.id);
+      const albumSessionToken = socket.data.albumSessionToken || Buffer.from(`${socket.id}:${Date.now()}:${Math.random()}`).toString("base64url");
+      socket.data.albumSessionToken = albumSessionToken;
       // Socket.IO may replay a join after a transient reconnect. Treat an
       // identical join as idempotent so it cannot create phantom leave/join
       // notifications or replace the member with a new anonymous name.
       if (existing && existing.room === room && existing.name === name) {
         socket.join(room);
-        socket.emit("join_success", { room, user: existing, users: getUsersInRoom(room), albumSessionToken: socket.data.albumSessionToken });
+        socket.emit("join_success", { room, user: existing, users: getUsersInRoom(room), albumSessionToken });
         io.to(room).emit("room_users", getUsersInRoom(room));
         return;
       }
@@ -27,8 +29,6 @@ function setupSocket(io) {
 
       socket.join(room);
 
-      const albumSessionToken = Buffer.from(`${socket.id}:${Date.now()}:${Math.random()}`).toString("base64url");
-      socket.data.albumSessionToken = albumSessionToken;
       socket.emit("join_success", {
         room,
         user: result,

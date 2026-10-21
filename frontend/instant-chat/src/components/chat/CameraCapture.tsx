@@ -1,13 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from "react";
-import { Camera, RefreshCw } from "lucide-react";
+import { Camera, RefreshCw, Send } from "lucide-react";
 
 type Props = {
   onCapture: (file: File) => void;
 };
 
 const MAX_CAPTURE_EDGE = 1600;
-// Pointer must drift less than this to count as a tap on the viewfinder
-const TAP_THRESHOLD_PX = 12;
 
 function makePhotoFile(video: HTMLVideoElement, zoom = 1): File | null {
   if (!video.videoWidth || !video.videoHeight) return null;
@@ -38,12 +36,12 @@ export default function CameraCapture({ onCapture }: Props) {
   const [flipping, setFlipping] = useState(false);
   const [facing, setFacing] = useState<FacingMode>("environment");
   const [zoom, setZoom] = useState(1);
+  const [capturedFile, setCapturedFile] = useState<File | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const maxZoom = 3;
   const activeDeviceIdRef = useRef<string | null>(null);
   const capturingRef = useRef(false);
 
-  // Viewfinder tap tracking
-  const viewDownPos = useRef<{ x: number; y: number } | null>(null);
   const touchPoints = useRef(new Map<number, { x: number; y: number }>());
   const pinchStartDistance = useRef<number | null>(null);
   const pinchStartZoom = useRef(1);
@@ -93,6 +91,10 @@ export default function CameraCapture({ onCapture }: Props) {
     return () => { document.body.style.overflow = prev; };
   }, []);
 
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
   const flipCamera = useCallback(async () => {
     if (flipping) return;
     setFlipping(true);
@@ -118,35 +120,27 @@ export default function CameraCapture({ onCapture }: Props) {
     capturingRef.current = true;
     const file = videoRef.current && makePhotoFile(videoRef.current, zoom);
     if (!file) { capturingRef.current = false; return; }
+    setCapturedFile(file);
+    setPreviewUrl(URL.createObjectURL(file));
+    capturingRef.current = false;
     setFlash(true);
     setTimeout(() => setFlash(false), 180);
-    setTimeout(() => onCapture(file), 120);
-  }, [ready, onCapture, zoom]);
+  }, [ready, zoom]);
 
-  // ── Viewfinder: record down, capture on up if small drift ──────────────
-  const onViewDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest("[data-cam-btn]")) return;
-    viewDownPos.current = { x: e.clientX, y: e.clientY };
+  const sendCaptured = useCallback(() => {
+    if (!capturedFile) return;
+    onCapture(capturedFile);
+  }, [capturedFile, onCapture]);
+
+  const retake = useCallback(() => {
+    setCapturedFile(null);
+    setPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
   }, []);
 
-  const onViewUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLElement).closest("[data-cam-btn]")) return;
-    if (pinchStartDistance.current !== null) {
-      viewDownPos.current = null;
-      return;
-    }
-    const down = viewDownPos.current;
-    viewDownPos.current = null;
-    if (!down) return;
-    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) <= TAP_THRESHOLD_PX) {
-      doCapture();
-    }
-  }, [doCapture]);
-
-  const onViewCancel = useCallback(() => { viewDownPos.current = null; }, []);
-
   const onViewPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    onViewDown(event);
     if (event.pointerType !== "touch") return;
     touchPoints.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (touchPoints.current.size === 2) {
@@ -154,7 +148,7 @@ export default function CameraCapture({ onCapture }: Props) {
       pinchStartDistance.current = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
       pinchStartZoom.current = zoom;
     }
-  }, [onViewDown, zoom]);
+  }, [zoom]);
 
   const onViewPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (event.pointerType !== "touch" || !touchPoints.current.has(event.pointerId)) return;
@@ -167,10 +161,9 @@ export default function CameraCapture({ onCapture }: Props) {
   }, [changeZoom]);
 
   const onViewPointerUp = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    onViewUp(event);
     touchPoints.current.delete(event.pointerId);
     if (touchPoints.current.size < 2) pinchStartDistance.current = null;
-  }, [onViewUp]);
+  }, []);
 
   return (
     <div
@@ -179,10 +172,6 @@ export default function CameraCapture({ onCapture }: Props) {
       role="dialog"
       aria-modal="true"
       aria-label="Camera"
-      onPointerDown={onViewPointerDown}
-      onPointerMove={onViewPointerMove}
-      onPointerUp={onViewPointerUp}
-      onPointerCancel={(event) => { onViewCancel(); touchPoints.current.delete(event.pointerId); pinchStartDistance.current = null; }}
     >
       {/* Live viewfinder */}
       <video
@@ -191,7 +180,11 @@ export default function CameraCapture({ onCapture }: Props) {
         muted
         playsInline
         onCanPlay={() => setReady(true)}
-        className="h-full w-full object-cover"
+        onPointerDown={onViewPointerDown}
+        onPointerMove={onViewPointerMove}
+        onPointerUp={onViewPointerUp}
+        onPointerCancel={(event) => { touchPoints.current.delete(event.pointerId); pinchStartDistance.current = null; }}
+        className={`${capturedFile ? "hidden" : "h-full w-full object-cover"}`}
         style={{
           // Mirror front camera so it feels natural
           transform: `${facing === "user" ? "scaleX(-1)" : "none"} scale(${zoom})`,
@@ -200,6 +193,10 @@ export default function CameraCapture({ onCapture }: Props) {
         }}
       />
 
+      {capturedFile && previewUrl && (
+        <img src={previewUrl} alt="Captured photo" className="h-full w-full object-contain bg-black" />
+      )}
+
       {/* Shutter flash */}
       <div
         aria-hidden
@@ -207,20 +204,13 @@ export default function CameraCapture({ onCapture }: Props) {
         style={{ opacity: flash ? 0.75 : 0 }}
       />
 
-      {/* ANNET camera header and dedicated camera switch */}
-      <div className="absolute inset-x-0 top-0 z-20 flex items-center justify-end gap-3 bg-gradient-to-b from-black/75 to-transparent px-4 pb-8 pt-[max(1rem,env(safe-area-inset-top))] sm:px-8">
-        <div className="flex items-center gap-2">
-          <button type="button" data-cam-btn onClick={() => void flipCamera()} disabled={flipping || !!error} className="flex h-10 items-center gap-2 rounded-full border border-primary/30 bg-[#071317]/75 px-3 text-xs font-medium text-primary shadow-[0_0_22px_rgba(0,220,190,.12)] backdrop-blur-xl transition-colors hover:bg-primary/15 disabled:opacity-50" aria-label="Switch camera"><RefreshCw className={`h-4 w-4 ${flipping ? "animate-spin" : ""}`} /><span className="hidden sm:inline">Switch camera</span></button>
-        </div>
-      </div>
-
       {/* Top hint */}
       <div className="camera-snap-ui pointer-events-none absolute inset-x-0 top-0 flex items-center justify-center p-4 pt-[max(1rem,env(safe-area-inset-top))]">
         <span className="camera-snap-hint rounded-full px-3 py-1.5 text-xs">
           {error
             ? error
             : ready
-              ? "Tap anywhere to click and send"
+              ? capturedFile ? "Ready to send" : "Capture a photo, then tap Send"
               : "Starting camera…"}
         </span>
       </div>
@@ -231,30 +221,15 @@ export default function CameraCapture({ onCapture }: Props) {
       </label>
 
       <div
-        data-cam-btn
-        onPointerDown={(event) => event.stopPropagation()}
-        onPointerUp={(event) => { event.stopPropagation(); doCapture(); }}
-        className="absolute left-1/2 z-10 flex -translate-x-1/2 cursor-pointer flex-col items-center gap-1.5"
-        style={{ bottom: "max(1.75rem, env(safe-area-inset-bottom))" }}
-        aria-label="Tap to capture and send"
+        className="absolute bottom-[max(1.75rem,env(safe-area-inset-bottom))] left-1/2 z-10 flex -translate-x-1/2 items-center gap-3"
       >
-        {/* Camera ring */}
-        {error ? (
-          <span className="text-sm text-red-300 bg-black/60 backdrop-blur-sm rounded-full px-4 py-2">
-            {error}
-          </span>
-        ) : (
-          <div className="camera-shutter relative flex items-center justify-center rounded-full p-4 text-white" aria-hidden>
-            <Camera className="h-7 w-7" />
-            {/* Flip indicator — small icon overlaid when front camera active */}
-            {facing === "user" && (
-              <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary/80 text-black">
-                <RefreshCw className="h-2.5 w-2.5" />
-              </span>
-            )}
-          </div>
-        )}
-
+        {!capturedFile ? <>
+          <button type="button" data-cam-btn onClick={() => void flipCamera()} disabled={flipping || !!error} className="flex h-12 w-12 items-center justify-center rounded-full border border-primary/40 bg-black/55 text-primary shadow-lg backdrop-blur-xl disabled:opacity-50" aria-label="Switch camera"><RefreshCw className={flipping ? "animate-spin" : ""} /></button>
+          <button type="button" data-cam-btn onClick={doCapture} disabled={!ready || !!error} className="camera-shutter flex h-16 w-16 items-center justify-center rounded-full text-white disabled:opacity-50" aria-label="Capture photo"><Camera className="h-7 w-7" /></button>
+        </> : <>
+          <button type="button" data-cam-btn onClick={retake} className="rounded-full border border-white/25 bg-black/55 px-4 py-3 text-sm text-white backdrop-blur-xl" aria-label="Retake photo">Retake</button>
+          <button type="button" data-cam-btn onClick={sendCaptured} className="flex items-center gap-2 rounded-full bg-primary px-5 py-3 text-sm font-semibold text-black shadow-lg" aria-label="Send photo"><Send className="h-4 w-4" />Send</button>
+        </>}
       </div>
 
       {/* Readiness pulse */}
