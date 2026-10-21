@@ -157,6 +157,8 @@ export default function ChatPage() {
   const pointerStartRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const eligiblePointerIdsRef = useRef<Set<number>>(new Set());
   const cameraHistoryRef = useRef(false);
+  const cameraOpenRef = useRef(false);
+  const cameraCaptureClosingRef = useRef(false);
   const backPromptedRef = useRef(false);
   const dragDepthRef = useRef(0);
 
@@ -285,14 +287,24 @@ export default function ChatPage() {
   }, [joined]);
 
   useEffect(() => {
+    cameraOpenRef.current = cameraOpen;
+  }, [cameraOpen]);
+
+  useEffect(() => {
     if (!joined) return;
     // Keep the first browser Back inside the room so accidental presses can
     // be confirmed. The second Back confirms the leave action.
     window.history.pushState({ ...window.history.state, annetRoom: true }, "", window.location.href);
     const onPopState = () => {
+      if (cameraCaptureClosingRef.current) {
+        cameraCaptureClosingRef.current = false;
+        return;
+      }
       // A photo viewer owns the first Back press. Do not turn it into a room
       // leave action; the viewer's own popstate handler will close it.
       if (document.querySelector("[data-album-viewer=\"true\"]")) return;
+      // Camera history belongs to the camera overlay, never to room exit.
+      if (cameraOpenRef.current || document.querySelector("[data-camera-overlay=\"true\"]")) return;
       if (backPromptedRef.current) {
         backPromptedRef.current = false;
         leave();
@@ -879,7 +891,8 @@ export default function ChatPage() {
     } catch (error) { setMessages((prev) => prev.filter((message) => message.id !== placeholderId)); toast.error(error instanceof Error ? error.message : "Album upload failed."); }
   };
 
-  const closeCamera = useCallback(() => {
+  const closeCamera = useCallback((afterCapture = false) => {
+    cameraCaptureClosingRef.current = afterCapture && cameraHistoryRef.current && window.history.state?.annetCamera === true;
     setCameraOpen(false);
     if (cameraHistoryRef.current && window.history.state?.annetCamera) {
       cameraHistoryRef.current = false;
@@ -1229,10 +1242,9 @@ export default function ChatPage() {
       {cameraOpen && (
         <CameraCapture
           onCapture={(file) => {
-            closeCamera();
+            closeCamera(true);
             void handleFile(file);
           }}
-          onClose={closeCamera}
         />
       )}
 
